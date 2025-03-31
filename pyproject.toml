@@ -1,0 +1,42 @@
+[project]
+name = "pretix-map"
+dynamic = ["version"]
+description = "An overview map of the catchment area of ​​previous orders. Measured by postcode"
+readme = "README.rst"
+license = {text = "Apache"}
+keywords = ["pretix"]
+authors = [
+    {name = "MarkenJaden", email = "jjsch1410@gmail.com"},
+]
+maintainers = [
+    {name = "MarkenJaden", email = "jjsch1410@gmail.com"},
+]
+
+dependencies = [
+]
+
+[project.entry-points."pretix.plugin"]
+pretix_mapplugin = "pretix_mapplugin:PretixPluginMeta"
+
+[project.entry-points."distutils.commands"]
+build = "pretix_plugin_build.build:CustomBuild"
+
+[build-system]
+requires = [
+    "setuptools",
+    "pretix-plugin-build",
+]
+
+[project.urls]
+homepage = "https://github.com/MarkenJaden/pretix-map"
+repository = "https://github.com/MarkenJaden/pretix-map"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "pretix_mapplugin.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["pretix*"]
+namespaces = false

@@ -1,0 +1,5 @@
+recursive-include pretix_mapplugin/static *
+recursive-include pretix_mapplugin/templates *
+recursive-include pretix_mapplugin/locale *
+include LICENSE
+exclude .gitlab-ci.yml

@@ -1,0 +1,5 @@
+[plugin]
+package = "pretix-map"
+modules = [ "pretix_mapplugin" ]
+marketplace_name = "map"
+
