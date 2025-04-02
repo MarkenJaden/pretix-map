@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', function () {
         console.log("Initializing Leaflet map...");
 
         // Center map initially (e.g., on Europe, adjust as needed)
-        map = L.map(mapContainerId).setView([51.505, -0.09], initialZoom);
+        map = L.map(mapContainerId).setView([48.85, 2.35], initialZoom);
 
         // Add a base tile layer (OpenStreetMap)
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {

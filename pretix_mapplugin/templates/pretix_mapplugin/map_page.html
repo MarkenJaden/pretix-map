@@ -15,21 +15,21 @@
 
     {# The container where the map will be rendered #}
     {# Add specific CSS for height/width if needed #}
-    <div id="sales-map-container" style="height: 600px; width: 100%; border: 1px solid #ccc; margin-top: 20px;">
+    <div id="sales-map-container">
         Loading map...
     </div>
 
     {# Include mapping library CSS/JS - Example using Leaflet #}
     {# Make sure to download/include these files or use a CDN #}
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/lib/leaflet-sales-map/leaflet.css' %}"
           integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
           crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    <script src="{% static 'pretix_mapplugin/lib/leaflet-sales-map/leaflet.js' %}"
             integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
             crossorigin=""></script>
 
     {# Include Leaflet.heat plugin for heatmap (if using Leaflet) #}
-    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script src="{% static 'pretix_mapplugin/lib/leaflet-sales-map/leaflet-heat.js' %}"></script>
 
     {# Include your custom JavaScript file that will fetch data and draw the map #}
     {# We will create this in the next step #}
@@ -42,8 +42,10 @@
         const salesMapDataUrl = "{% url 'plugins:pretix_mapplugin:event.settings.salesmap.data' organizer=request.organizer.slug event=request.event.slug %}";
     </script>
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
-    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin\lib\leaflet-sales-map\MarkerCluster.css' %}" />
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin\lib\leaflet-sales-map\MarkerCluster.Default.css' %}" />
+    <script src="{% static 'pretix_mapplugin\lib\leaflet-sales-map\leaflet.markercluster.js' %}"></script>
+
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/css/salesmap.css' %}"/>
 
 {% endblock %}
