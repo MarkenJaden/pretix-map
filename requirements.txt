@@ -1,0 +1,4 @@
+setuptools~=70.0.0
+Django~=4.2.20
+pretix~=2025.4.0.dev0
+geopy~=2.4.1

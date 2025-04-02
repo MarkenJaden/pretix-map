@@ -7,45 +7,44 @@
 {% block inside %}
     <h1>{% trans "Ticket Sales Map" %}</h1>
 
-    {# TODO: Add map controls (Pin/Heatmap toggle) here later #}
     <div class="form-group">
          <button id="view-toggle-btn" class="btn btn-default">Switch to Heatmap View</button>
     </div>
 
-
     {# The container where the map will be rendered #}
-    {# Add specific CSS for height/width if needed #}
+    {# Ensure this container has a height defined in your salesmap.css #}
     <div id="sales-map-container">
         Loading map...
     </div>
 
-    {# Include mapping library CSS/JS - Example using Leaflet #}
-    {# Make sure to download/include these files or use a CDN #}
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.css' %}"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossorigin=""/>
-    <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.js' %}"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin=""></script>
+    {# === LEAFLET CORE IS LOADED BY PRETIX BASE TEMPLATE - DO NOT LOAD AGAIN === #}
+    {% comment %}
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.css' %}"/>
+    <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.js' %}"></script>
+    {% endcomment %}
+    {# === END LEAFLET CORE === #}
 
-    {# Include Leaflet.heat plugin for heatmap (if using Leaflet) #}
+
+    {# === LOAD LEAFLET PLUGINS (Heatmap, MarkerCluster) === #}
+    {# Ensure these plugin versions are compatible with Pretix's Leaflet version #}
     <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet-heat.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.css' %}" />
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.Default.css' %}" />
+    <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.markercluster.js' %}"></script>
+    {# === END LEAFLET PLUGINS === #}
 
-    {# Include your custom JavaScript file that will fetch data and draw the map #}
-    {# We will create this in the next step #}
+
+    {# === LOAD YOUR PLUGIN'S CUSTOM JS AND CSS === #}
     <script src="{% static 'pretix_mapplugin/js/salesmap.js' %}"></script>
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/css/salesmap.css' %}"/>
+    {# === END CUSTOM JS AND CSS === #}
 
 
-    {# Pass the API endpoint URL to the JavaScript #}
+    {# === PASS DATA TO JAVASCRIPT === #}
     <script nonce="{{ request.csp_nonce }}">
         // Make the data URL available to our salesmap.js
         const salesMapDataUrl = "{% url 'plugins:pretix_mapplugin:event.settings.salesmap.data' organizer=request.organizer.slug event=request.event.slug %}";
     </script>
-
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin\libs\leaflet-sales-map\MarkerCluster.css' %}" />
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin\libs\leaflet-sales-map\MarkerCluster.Default.css' %}" />
-    <script src="{% static 'pretix_mapplugin\libs\leaflet-sales-map\leaflet.markercluster.js' %}"></script>
-
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin/css/salesmap.css' %}"/>
+    {# === END DATA PASSING === #}
 
 {% endblock %}
