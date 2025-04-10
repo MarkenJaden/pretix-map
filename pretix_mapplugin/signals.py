@@ -79,7 +79,7 @@ def modify_csp_header_for_map(sender, request: HttpRequest, response: HttpRespon
     # 4. Define CSP additions needed for the map
     map_csp_additions = {
         # Add the core Pretix nonce value to script-src
-        'script-src': [f"'nonce-{nonce}'"] if nonce else ["'self' http://localhost:8000 'unsafe-inline'"],
+        'script-src': [f"'nonce-{nonce}'"] if nonce else ["'self' 'unsafe-inline'"],
         # Add the OpenStreetMap domain to img-src
         'img-src': ['https://*.tile.openstreetmap.org'],
         # Add style-src unsafe-inline ONLY if you still need it (i.e., didn't fix inline style)
