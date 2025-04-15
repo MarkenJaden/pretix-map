@@ -1,6 +1,7 @@
 {% extends "pretixcontrol/event/settings_base.html" %} {# Use Pretix base template #}
 {% load i18n %}
 {% load static %} {# To load static files like CSS/JS later #}
+{% load eventurl %} {# Needed for the url template tag #}
 
 {% block title %}{% trans "Ticket Sales Map" %}{% endblock %}
 
@@ -8,43 +9,37 @@
     <h1>{% trans "Ticket Sales Map" %}</h1>
 
     <div class="form-group">
-         <button id="view-toggle-btn" class="btn btn-default">Switch to Heatmap View</button>
+        <button id="view-toggle-btn" class="btn btn-default">Switch to Heatmap View</button>
     </div>
 
-    {# The container where the map will be rendered #}
-    {# Ensure this container has a height defined in your salesmap.css #}
-    <div id="sales-map-container">
-        Loading map...
+    {# --- Container for Map and Status Overlay --- #}
+    <div style="position: relative; border: 1px solid #ccc;"> {# Wrapper for positioning #}
+
+        {# The container where the map will be rendered #}
+        {# Ensure this has height/width via CSS #}
+        <div id="sales-map-container"
+             data-data-url="{% url 'plugins:pretix_mapplugin:event.settings.salesmap.data' organizer=request.organizer.slug event=request.event.slug %}">
+            {# Content inside here will be managed by Leaflet #}
+        </div>
+
+        {# --- Status Overlay Element --- #}
+        {# Initially visible, hidden by JS when map loads/errors occur #}
+        <div id="map-status-overlay"
+             style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.8); z-index: 1000; display: flex; justify-content: center; align-items: center; text-align: center;">
+            <p>Loading map data...</p>
+        </div>
+        {# --- End Status Overlay --- #}
+
     </div>
+    {# --- End Container Wrapper --- #}
 
-    {# === LEAFLET CORE IS LOADED BY PRETIX BASE TEMPLATE - DO NOT LOAD AGAIN === #}
-    {% comment %}
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.css' %}"/>
-    <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.js' %}"></script>
-    {% endcomment %}
-    {# === END LEAFLET CORE === #}
-
-
-    {# === LOAD LEAFLET PLUGINS (Heatmap, MarkerCluster) === #}
-    {# Ensure these plugin versions are compatible with Pretix's Leaflet version #}
+    {# === LEAFLET PLUGINS (Loaded via staticfiles) === #}
     <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet-heat.js' %}"></script>
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.css' %}" />
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.Default.css' %}" />
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.css' %}"/>
+    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.Default.css' %}"/>
     <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.markercluster.js' %}"></script>
-    {# === END LEAFLET PLUGINS === #}
 
-
-    {# === LOAD YOUR PLUGIN'S CUSTOM JS AND CSS === #}
     <script src="{% static 'pretix_mapplugin/js/salesmap.js' %}"></script>
     <link rel="stylesheet" href="{% static 'pretix_mapplugin/css/salesmap.css' %}"/>
-    {# === END CUSTOM JS AND CSS === #}
-
-
-    {# === PASS DATA TO JAVASCRIPT === #}
-    <script nonce="{{ request.csp_nonce }}">
-        // Make the data URL available to our salesmap.js
-        const salesMapDataUrl = "{% url 'plugins:pretix_mapplugin:event.settings.salesmap.data' organizer=request.organizer.slug event=request.event.slug %}";
-    </script>
-    {# === END DATA PASSING === #}
 
 {% endblock %}

@@ -16,7 +16,7 @@ class PluginApp(PluginConfig):
     class PretixPluginMeta:
         name = gettext_lazy("Map-Plugin")
         author = "MarkenJaden"
-        description = gettext_lazy("An overview map of the catchment area of ​​previous orders. Measured by postcode")
+        description = gettext_lazy("An overview map of the catchment area of previous orders. Measured by postcode")
         visible = True
         version = __version__
         category = "FEATURE"

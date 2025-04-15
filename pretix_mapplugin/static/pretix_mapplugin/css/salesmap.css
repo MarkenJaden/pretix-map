@@ -1,6 +1,19 @@
 #sales-map-container {
-    height: 600px;
+    height: 500px;
     width: 100%;
-    border: 1px solid #ccc;
-    margin-top: 20px;
+    position: relative; /* Needed for Leaflet internal positioning */
+    background: #eee; /* Optional: Light background while tiles load */
+}
+
+#map-status-overlay p {
+    padding: 1em;
+    background: #fff;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+#map-status-overlay p.text-danger { /* Style for error messages */
+    color: #a94442; /* Bootstrap danger color */
+    background-color: #f2dede; /* Bootstrap danger background */
+    border-color: #ebccd1; /* Bootstrap danger border */
 }

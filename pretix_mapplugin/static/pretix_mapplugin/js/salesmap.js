@@ -2,46 +2,87 @@
 document.addEventListener('DOMContentLoaded', function () {
     console.log("Sales Map JS Loaded (FINAL TEST - INCLUDING TOGGLE)");
 
-    L.Icon.Default.imagePath = '/static/leaflet/images/';
-    console.log("Set Leaflet default imagePath to:", L.Icon.Default.imagePath);
-
     // --- Configuration ---
     const mapContainerId = 'sales-map-container';
-    const toggleButtonId = 'view-toggle-btn'; // Re-enable button ID
+    const statusOverlayId = 'map-status-overlay';
+    const toggleButtonId = 'view-toggle-btn';
     const initialZoom = 5;
     const defaultMapView = 'pins'; // Can be 'pins' or 'heatmap'
     const heatmapOptions = {
         radius: 25,
         blur: 15,
         maxZoom: 18,
-        max: 1.0,
+        // max: 1.0, // Let leaflet-heat calculate max based on data density
         minOpacity: 0.2
     };
 
     // --- Globals ---
     let map = null; // Leaflet map instance
-    let allCoordinates = []; // To store fetched [lat, lon] pairs
+    let coordinateData = []; // To store fetched [{lat: Y, lon: X, tooltip: Z}, ...] objects
     let pinLayer = null; // Layer for markers/clusters
     let heatmapLayer = null; // Layer for heatmap
     let currentView = defaultMapView; // Track current view state
+    let dataUrl = null; // To store the API endpoint URL
 
     const mapElement = document.getElementById(mapContainerId);
-    const toggleButton = document.getElementById(toggleButtonId); // Get the button element
+    const statusOverlay = document.getElementById(statusOverlayId);
+    const toggleButton = document.getElementById(toggleButtonId);
+
+    // --- Helper to update status overlay ---
+    function updateStatus(message, isError = false) {
+        if (statusOverlay) {
+            const p = statusOverlay.querySelector('p');
+            if (p) {
+                p.textContent = message;
+                p.className = isError ? 'text-danger' : ''; // Apply error class if needed
+            }
+            statusOverlay.style.display = 'flex'; // Make sure it's visible
+        } else {
+            console.warn("Status overlay element not found.");
+        }
+    }
+
+    // --- Helper to hide status overlay ---
+    function hideStatus() {
+        if (statusOverlay) {
+            statusOverlay.style.display = 'none'; // Hide the overlay
+        }
+    }
 
     // --- Initialization ---
     function initializeMap() {
+        console.log("Initializing Leaflet map...");
+
         if (!mapElement) {
             console.error(`Map container element #${mapContainerId} not found.`);
-            return;
+            return; // Stop initialization if container is missing
+        }
+        if (!statusOverlay) {
+            console.warn("Status overlay not found");
         }
         if (!toggleButton) {
             // Log a warning but don't necessarily stop if button is missing
             console.warn(`Toggle button #${toggleButtonId} not found.`);
         }
 
+        // --- Get the data URL from the container's data attribute ---
+        dataUrl = mapElement.dataset.dataUrl;
+        if (!dataUrl) {
+            console.error("Data URL not found in container's data-data-url attribute! Cannot fetch data.");
+            updateStatus("Configuration Error: Missing data source URL.", true);
+            return; // Stop initialization if data URL is missing
+        }
+        console.log(`Data URL found: ${dataUrl}`);
+        // --- End data URL retrieval ---
+
+        // Set Leaflet default image path (if needed, depends on static file setup)
+        L.Icon.Default.imagePath = '/static/leaflet/images/'; // Ensure this path is correct
+        console.log("Set Leaflet default imagePath to:", L.Icon.Default.imagePath);
+
         console.log("Initializing Leaflet map...");
+        updateStatus("Initializing map...");
         try {
-            map = L.map(mapContainerId).setView([48.85, 2.35], initialZoom);
+            map = L.map(mapContainerId).setView([48.85, 2.35], initialZoom); // Default center
             console.log("L.map() called successfully.");
 
             console.log("Adding Tile Layer...");
@@ -57,94 +98,94 @@ document.addEventListener('DOMContentLoaded', function () {
                 console.log("Toggle button not found, skipping listener setup.");
             }
 
-            // Fetch data and populate the map layers (but don't add to map yet)
+            // Fetch data and populate the map layers
             fetchCoordinateData();
 
         } catch (error) {
             console.error("ERROR during Leaflet initialization:", error);
-            mapElement.innerHTML = `<p class="text-danger">Leaflet Init Failed: ${error.message}</p>`;
+            updateStatus(`Leaflet Init Failed: ${error.message}`, true);
         }
     }
 
     // --- Data Fetching ---
     function fetchCoordinateData() {
-        if (typeof salesMapDataUrl === 'undefined' || !salesMapDataUrl) { /* ... error handling ... */
+        // dataUrl should be set during initialization
+        if (!dataUrl) {
+            console.error("Cannot fetch data: dataUrl is not set.");
             return;
         }
 
-        console.log("Fetching coordinates from:", salesMapDataUrl);
-        // mapElement.innerHTML = '<p>Loading ticket locations...</p>'; // Optional loading message
+        console.log("Fetching coordinates from:", dataUrl);
+        updateStatus("Loading ticket locations..."); // Update status
 
-        fetch(salesMapDataUrl)
-            .then(response => { /* ... check response ... */
+        fetch(dataUrl)
+            .then(response => {
+                if (!response.ok) {
+                    // Throw an error with status text to be caught below
+                    throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
+                }
                 return response.json();
             })
             .then(data => {
-                if (data.error) { /* ... handle API error ... */
+                if (data.error) { // Check for application-level errors from the backend
                     throw new Error(`API Error: ${data.error}`);
                 }
-                if (!data.coordinates || data.coordinates.length === 0) {
-                    console.log("No coordinate data received.");
-                    // mapElement.innerHTML = '<p>No geocoded ticket locations found for this event.</p>';
+                // --- Adjust check for the new data structure ---
+                if (!data || !data.locations || !Array.isArray(data.locations)) {
+                    console.warn("Invalid or empty data format received:", data);
+                    updateStatus("No valid geocoded ticket locations found.", false); // Inform user
                     if (toggleButton) toggleButton.disabled = true; // Disable button if no data
+                    coordinateData = []; // Ensure it's empty
+                    return; // Stop processing if data is missing/invalid
+                }
+                if (data.locations.length === 0) {
+                    console.log("No coordinate data received (empty list).");
+                    updateStatus("No geocoded ticket locations found for this event.", false);
+                    if (toggleButton) toggleButton.disabled = true;
+                    coordinateData = [];
                     return;
                 }
+                // --- End structure check ---
 
-                allCoordinates = data.coordinates;
-                console.log(`Received ${allCoordinates.length} coordinates.`);
-                console.log("Coordinate data:", JSON.stringify(allCoordinates));
-                // mapElement.innerHTML = ''; // Clear loading message
+                coordinateData = data.locations; // Store the [{lat: Y, lon: X, tooltip: Z}, ...] array
+                console.log(`Received ${coordinateData.length} coordinates.`);
 
                 // --- Create layers (but don't add to map yet) ---
-                createMapLayers(); // Call the layer creation function
+                createMapLayers();
 
                 // --- Show the default view ---
-                showCurrentView(); // Call function to add the correct layer initially
+                showCurrentView();
 
                 // Adjust map bounds to fit markers if coordinates were found
-                // Use pinLayer for bounds calculation if available
-                if (allCoordinates.length > 0 && pinLayer) {
-                    try {
-                        console.log("Fitting bounds based on pin layer...");
-                        const bounds = pinLayer.getBounds ? pinLayer.getBounds() : L.latLngBounds(allCoordinates); // Handle direct marker case if needed, prefer getBounds for cluster
-                        if (bounds && bounds.isValid()) {
-                            map.fitBounds(bounds, {padding: [50, 50]});
-                            console.log("Bounds fitted.");
-                        } else {
-                            console.warn("Could not get valid bounds, falling back to setView.");
-                            if (allCoordinates.length === 1) {
-                                map.setView(allCoordinates[0], 13);
-                            }
-                        }
-                    } catch (e) {
-                        console.error("Error fitting bounds:", e);
-                        if (allCoordinates.length === 1) {
-                            map.setView(allCoordinates[0], 13);
-                        }
-                    }
-                } else if (allCoordinates.length > 0) {
-                    // Fallback if only heatmap exists or pinLayer has no getBounds
-                    console.log("Fitting bounds based on raw coordinates...");
-                    map.fitBounds(L.latLngBounds(allCoordinates), {padding: [50, 50]});
-                }
+                adjustMapBounds();
 
+                // Enable button if it was disabled and we got data
+                if (toggleButton) toggleButton.disabled = false;
+                hideStatus();
 
-                // Force redraw just in case
+                // Force redraw just in case (sometimes needed after dynamic content/bounds changes)
                 setTimeout(function () {
                     console.log("Forcing map.invalidateSize() after data load...");
-                    if (map) map.invalidateSize();
+                    console.log("Map container element just before invalidateSize:", document.getElementById(mapContainerId)); // Check if it exists here
+                    if (map && document.getElementById(mapContainerId)) { // Add check before calling
+                        map.invalidateSize();
+                    } else {
+                        console.warn("Skipping invalidateSize because map or container is missing.");
+                    }
                 }, 100);
 
             })
             .catch(error => {
                 console.error('Error fetching or processing coordinate data:', error);
-                mapElement.innerHTML = `<p class="text-danger">Error loading map data: ${error.message}. Please check logs or try again later.</p>`;
+                console.log("Map container element during fetch error:", document.getElementById(mapContainerId)); // Check if it exists here
+                updateStatus(`Error loading map data: ${error.message}. Please try again later.`, true); // Show error in overlay
+                if (toggleButton) toggleButton.disabled = true;
             });
     }
 
-    // --- Layer Creation (Restored original structure) ---
+    // --- Layer Creation ---
     function createMapLayers() {
-        if (!map || allCoordinates.length === 0) {
+        if (!map || coordinateData.length === 0) {
             console.log("Skipping layer creation (no map or data).");
             return;
         }
@@ -152,43 +193,115 @@ document.addEventListener('DOMContentLoaded', function () {
         // 1. Create Pin Layer (using MarkerCluster)
         console.log("Creating pin layer instance (marker cluster)...");
         pinLayer = L.markerClusterGroup(); // Initialize cluster group
-        allCoordinates.forEach((coord, index) => {
+        coordinateData.forEach((loc, index) => {
             try {
-                const latLng = new L.LatLng(coord[0], coord[1]);
-                if (isNaN(latLng.lat) || isNaN(latLng.lng)) { /* ... skip invalid ... */
+                // --- Use lat/lon properties from the object ---
+                if (loc.lat == null || loc.lon == null) {
+                    console.warn(`Skipping coordinate ${index} due to missing lat/lon:`, loc);
+                    return;
+                }
+                const latLng = L.latLng(loc.lat, loc.lon); // Create LatLng object
+                if (isNaN(latLng.lat) || isNaN(latLng.lng)) { // Validate LatLng
+                    console.warn(`Skipping coordinate ${index} due to invalid lat/lon values:`, loc);
                     return;
                 }
                 const marker = L.marker(latLng);
+                // --- Add tooltip if present ---
+                if (loc.tooltip) {
+                    marker.bindTooltip(loc.tooltip);
+                }
                 pinLayer.addLayer(marker);
-            } catch (e) { /* ... error handling ... */
+            } catch (e) {
+                console.error(`Error creating marker for coordinate ${index}:`, loc, e);
             }
         });
-        console.log("Pin layer instance created.");
+        console.log("Pin layer instance created with markers.");
 
 
         // 2. Create Heatmap Layer
         console.log("Creating heatmap layer instance...");
         try {
-            heatmapLayer = L.heatLayer(allCoordinates, heatmapOptions);
-            console.log("Heatmap layer instance created.");
+            // --- Map data to [lat, lon, intensity] format ---
+            const heatPoints = coordinateData.map(loc => {
+                // Ensure lat/lon are valid before adding
+                if (loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon)) {
+                    return [loc.lat, loc.lon, 1.0]; // Intensity 1.0 for all points, adjust if needed
+                }
+                return null; // Skip invalid points
+            }).filter(p => p !== null); // Remove null entries
+
+            if (heatPoints.length > 0) {
+                heatmapLayer = L.heatLayer(heatPoints, heatmapOptions);
+                console.log("Heatmap layer instance created.");
+            } else {
+                console.warn("No valid points found for heatmap layer after filtering.");
+                heatmapLayer = null;
+            }
         } catch (e) {
             console.error("Error creating heatmap layer instance:", e);
             heatmapLayer = null; // Ensure it's null if creation failed
         }
 
-        console.log("Map layer instances created.");
+        console.log("Map layer instances created/updated.");
     }
 
-    // --- View Toggling (Restored) ---
+    // --- Adjust Map Bounds ---
+    function adjustMapBounds() {
+        if (!map || coordinateData.length === 0) return;
+
+        try {
+            let bounds = null;
+            // Prefer using marker cluster bounds if available and valid
+            if (pinLayer && typeof pinLayer.getBounds === 'function') {
+                bounds = pinLayer.getBounds();
+                console.log("Attempting to get bounds from pin layer (marker cluster).");
+            }
+
+            // If no valid bounds from cluster, or only heatmap exists, calculate from raw data
+            if (!bounds || !bounds.isValid()) {
+                console.log("Pin layer bounds invalid or unavailable, calculating bounds from raw coordinates.");
+                const latLngs = coordinateData
+                    .map(loc => {
+                        if (loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon)) {
+                            return [loc.lat, loc.lon];
+                        }
+                        return null;
+                    })
+                    .filter(p => p !== null);
+
+                if (latLngs.length > 0) {
+                    bounds = L.latLngBounds(latLngs);
+                }
+            }
+
+            // Fit map to bounds if valid bounds were found
+            if (bounds && bounds.isValid()) {
+                console.log("Fitting map to calculated bounds...");
+                map.fitBounds(bounds, {padding: [50, 50]}); // Add padding
+                console.log("Bounds fitted.");
+            } else if (coordinateData.length === 1) {
+                // Special case for a single point
+                console.log("Only one valid coordinate, setting view directly.");
+                const singleCoord = coordinateData.find(loc => loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon));
+                if (singleCoord) {
+                    map.setView([singleCoord.lat, singleCoord.lon], 13); // Zoom level 13 for single point
+                } else {
+                    console.warn("Could not find the single valid coordinate to set view.");
+                }
+            } else {
+                console.warn("Could not determine valid bounds to fit the map.");
+            }
+        } catch (e) {
+            console.error("Error fitting map bounds:", e);
+        }
+    }
+
+    // --- View Toggling ---
     function setupToggleButton() {
         updateButtonText(); // Set initial text
         toggleButton.addEventListener('click', () => {
             console.log("Toggle button clicked!");
-            if (currentView === 'pins') {
-                currentView = 'heatmap';
-            } else {
-                currentView = 'pins';
-            }
+            currentView = (currentView === 'pins') ? 'heatmap' : 'pins';
             showCurrentView(); // Update the map layers
             updateButtonText(); // Update the button text
         });
@@ -202,22 +315,17 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        // --- IMPORTANT: Safely remove existing layers ---
+        // --- Safely remove existing layers ---
         console.log("Removing existing layers (if present)...");
         if (pinLayer && map.hasLayer(pinLayer)) {
             map.removeLayer(pinLayer);
             console.log("Removed pin layer");
-        } else {
-            // console.log("Pin layer was not on map."); // Optional debug log
         }
         if (heatmapLayer && map.hasLayer(heatmapLayer)) {
             map.removeLayer(heatmapLayer);
             console.log("Removed heatmap layer");
-        } else {
-            // console.log("Heatmap layer was not on map."); // Optional debug log
         }
         // --- End removal ---
-
 
         // --- Add the selected layer ---
         console.log(`Adding ${currentView} layer...`);
@@ -229,7 +337,13 @@ document.addEventListener('DOMContentLoaded', function () {
                 map.addLayer(heatmapLayer);
                 console.log("Added heatmap layer to map.");
             } else {
-                console.warn(`Cannot add layer for view "${currentView}": Layer instance might be missing or null.`);
+                console.warn(`Cannot add layer for view "${currentView}": Corresponding layer instance is missing or null.`);
+                // Maybe display a message if no layers could be shown?
+                mapElement.innerHTML += '<p style="position: absolute; top: 10px; left: 50px; background: yellow; padding: 5px; z-index: 1000;">No data to display for this view.</p>';
+                setTimeout(() => { // Clear message after a few seconds
+                    const msgElement = mapElement.querySelector('p[style*="yellow"]');
+                    if (msgElement) msgElement.remove();
+                }, 3000);
             }
         } catch (e) {
             console.error(`Error adding ${currentView} layer:`, e);
@@ -239,14 +353,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function updateButtonText() {
         if (!toggleButton) return;
-        if (currentView === 'pins') {
-            toggleButton.textContent = 'Switch to Heatmap View';
-        } else {
-            toggleButton.textContent = 'Switch to Pin View';
-        }
+        const nextViewText = (currentView === 'pins') ? 'Heatmap' : 'Pin';
+        toggleButton.textContent = `Switch to ${nextViewText} View`;
         console.log(`Button text updated to: ${toggleButton.textContent}`);
     }
-
 
     // --- Start ---
     initializeMap();
