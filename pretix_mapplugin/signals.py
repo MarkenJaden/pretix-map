@@ -1,8 +1,8 @@
 import logging
 from django.dispatch import receiver
-from django.urls import reverse, NoReverseMatch  # Import reverse and NoReverseMatch
-from django.utils.translation import gettext_lazy as _  # For translatable labels
 from django.http import HttpRequest  # For type hinting
+from django.urls import NoReverseMatch, reverse  # Import reverse and NoReverseMatch
+from django.utils.translation import gettext_lazy as _  # For translatable labels
 
 # --- Pretix Signals ---
 from pretix.base.signals import order_paid

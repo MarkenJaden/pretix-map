@@ -1,10 +1,10 @@
 import logging
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-from time import sleep
 
 # --- Import Django settings ---
 from django.conf import settings
+from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+from geopy.geocoders import Nominatim
+from time import sleep
 
 # Configure logging for your plugin
 logger = logging.getLogger(__name__)

@@ -1,4 +1,5 @@
 from django.urls import re_path
+
 from .views import SalesMapDataView, SalesMapView  # Import your views
 
 # Define the URL patterns for the event settings area

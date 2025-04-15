@@ -1,5 +1,6 @@
 from django.db import models
-from pretix.base.models import Order, LoggedModel
+from pretix.base.models import LoggedModel, Order
+
 
 class OrderGeocodeData(LoggedModel):
     """

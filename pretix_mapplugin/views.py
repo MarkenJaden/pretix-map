@@ -1,22 +1,25 @@
 import logging
-from django.http import JsonResponse, HttpResponse  # Import HttpResponse
-from django.views.generic import View, TemplateView
-from django.utils.translation import gettext_lazy as _
+from django.db.models import Prefetch  # Needed for prefetch_related optimization
+from django.http import HttpResponse, JsonResponse  # Import HttpResponse
+
 # --- CORRECTED IMPORTS ---
 from django.urls import reverse  # Needed to generate URLs
 from django.utils.formats import date_format  # For localized date formatting
-from django.db.models import Prefetch  # Needed for prefetch_related optimization
+from django.utils.translation import gettext_lazy as _
+from django.views.generic import TemplateView, View
+from pretix.base.models import Order  # Make sure Order is imported
+from pretix.control.views.event import EventSettingsViewMixin
+
+from .models import OrderGeocodeData
+
 # --- END CORRECTED IMPORTS ---
 
-from pretix.control.views.event import EventSettingsViewMixin
-from .models import OrderGeocodeData
-from pretix.base.models import Order  # Make sure Order is imported
 
 # --- Import CSP helpers (Still needed for SalesMapView) ---
 try:
-    from pretix.base.csp import _parse_csp, _merge_csp, _render_csp
+    from pretix.base.csp import _merge_csp, _parse_csp, _render_csp
 except ImportError:
-    from pretix.base.middleware import _parse_csp, _merge_csp, _render_csp
+    from pretix.base.middleware import _merge_csp, _parse_csp, _render_csp
 
 logger = logging.getLogger(__name__)
 

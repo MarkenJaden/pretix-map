@@ -1,12 +1,12 @@
 import logging
-from django.core.management.base import BaseCommand, CommandError
 from django.core.exceptions import FieldDoesNotExist
+from django.core.management.base import BaseCommand, CommandError
 
 # Import scope activation helpers
 from django_scopes import scope
 
 # Import necessary Pretix models
-from pretix.base.models import Order, Event, Organizer
+from pretix.base.models import Event, Order, Organizer
 
 # Import your Geocode model and the task
 from pretix_mapplugin.models import OrderGeocodeData

@@ -1,7 +1,11 @@
 import logging
 from pretix.base.models import Order
-from pretix.celery_app import app # Import the Pretix Celery app instance
-from .geocoding import get_formatted_address_from_order, geocode_address # Import from Step 3
+from pretix.celery_app import app  # Import the Pretix Celery app instance
+
+from .geocoding import (  # Import from Step 3
+    geocode_address,
+    get_formatted_address_from_order,
+)
 from .models import OrderGeocodeData
 
 logger = logging.getLogger(__name__)
