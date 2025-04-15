@@ -13,6 +13,7 @@ maintainers = [
 ]
 
 dependencies = [
+    "geopy",
 ]
 
 [project.entry-points."pretix.plugin"]
