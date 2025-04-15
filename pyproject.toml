@@ -27,7 +27,6 @@ requires = [
     "pretix-plugin-build",
     "geopy",
 ]
-build-backend = "setuptools.build_meta"
 
 [project.urls]
 homepage = "https://github.com/MarkenJaden/pretix-map"
