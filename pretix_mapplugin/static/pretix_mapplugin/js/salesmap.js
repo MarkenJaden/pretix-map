@@ -193,53 +193,67 @@ document.addEventListener('DOMContentLoaded', function () {
         // 1. Create Pin Layer (using MarkerCluster)
         console.log("Creating pin layer instance (marker cluster)...");
         pinLayer = L.markerClusterGroup(); // Initialize cluster group
-        coordinateData.forEach((loc, index) => {
+        coordinateData.forEach((loc, index) => { // loc is now {lat, lon, tooltip, order_url}
             try {
-                // --- Use lat/lon properties from the object ---
-                if (loc.lat == null || loc.lon == null) {
-                    console.warn(`Skipping coordinate ${index} due to missing lat/lon:`, loc);
+                if (loc.lat == null || loc.lon == null) { /* ... skip invalid ... */
                     return;
                 }
-                const latLng = L.latLng(loc.lat, loc.lon); // Create LatLng object
-                if (isNaN(latLng.lat) || isNaN(latLng.lng)) { // Validate LatLng
-                    console.warn(`Skipping coordinate ${index} due to invalid lat/lon values:`, loc);
+                const latLng = L.latLng(loc.lat, loc.lon);
+                if (isNaN(latLng.lat) || isNaN(latLng.lng)) { /* ... skip invalid ... */
                     return;
                 }
+
                 const marker = L.marker(latLng);
-                // --- Add tooltip if present ---
+
+                // --- Use the enhanced tooltip from backend ---
+                // Leaflet tooltips handle HTML content by default
                 if (loc.tooltip) {
                     marker.bindTooltip(loc.tooltip);
                 }
-                pinLayer.addLayer(marker);
+                // --- End Tooltip ---
+
+                // --- Add Click Listener to open order URL ---
+                if (loc.order_url) { // Only add listener if URL was successfully generated
+                    marker.on('click', function () {
+                        console.log(`Marker clicked, opening URL: ${loc.order_url}`);
+                        // Open in a new tab, which is usually better for control panel links
+                        window.open(loc.order_url, '_blank');
+                        // If you prefer opening in the same tab:
+                        // window.location.href = loc.order_url;
+                    });
+                } else {
+                    // Log if URL is missing for a marker, maybe backend issue
+                    console.warn(`Order URL missing for coordinate index ${index}, click disabled for this marker.`);
+                }
+                // --- End Click Listener ---
+
+                pinLayer.addLayer(marker); // Add marker to cluster group
+
             } catch (e) {
                 console.error(`Error creating marker for coordinate ${index}:`, loc, e);
             }
         });
-        console.log("Pin layer instance created with markers.");
+        console.log("Pin layer instance created with markers (incl. tooltips and clicks).");
 
 
-        // 2. Create Heatmap Layer
+        // 2. Create Heatmap Layer (No changes needed here)
         console.log("Creating heatmap layer instance...");
         try {
-            // --- Map data to [lat, lon, intensity] format ---
             const heatPoints = coordinateData.map(loc => {
-                // Ensure lat/lon are valid before adding
                 if (loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon)) {
-                    return [loc.lat, loc.lon, 1.0]; // Intensity 1.0 for all points, adjust if needed
+                    return [loc.lat, loc.lon, 1.0];
                 }
-                return null; // Skip invalid points
-            }).filter(p => p !== null); // Remove null entries
+                return null;
+            }).filter(p => p !== null);
 
             if (heatPoints.length > 0) {
                 heatmapLayer = L.heatLayer(heatPoints, heatmapOptions);
                 console.log("Heatmap layer instance created.");
-            } else {
-                console.warn("No valid points found for heatmap layer after filtering.");
+            } else { /* ... handle no valid points ... */
                 heatmapLayer = null;
             }
-        } catch (e) {
-            console.error("Error creating heatmap layer instance:", e);
-            heatmapLayer = null; // Ensure it's null if creation failed
+        } catch (e) { /* ... error handling ... */
+            heatmapLayer = null;
         }
 
         console.log("Map layer instances created/updated.");
