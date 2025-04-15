@@ -1,15 +1,15 @@
 [project]
 name = "pretix-map"
 dynamic = ["version"]
-description = "An overview map of the catchment area of ​​previous orders. Measured by postcode"
+description = "An overview map of the catchment area of previous orders. Measured by postcode"
 readme = "README.rst"
-license = {text = "Apache"}
+license = { text = "Apache" }
 keywords = ["pretix"]
 authors = [
-    {name = "MarkenJaden", email = "jjsch1410@gmail.com"},
+    { name = "MarkenJaden", email = "jjsch1410@gmail.com" },
 ]
 maintainers = [
-    {name = "MarkenJaden", email = "jjsch1410@gmail.com"},
+    { name = "MarkenJaden", email = "jjsch1410@gmail.com" },
 ]
 
 dependencies = [
@@ -27,6 +27,7 @@ requires = [
     "pretix-plugin-build",
     "geopy",
 ]
+build-backend = "setuptools.build_meta"
 
 [project.urls]
 homepage = "https://github.com/MarkenJaden/pretix-map"
@@ -36,7 +37,7 @@ repository = "https://github.com/MarkenJaden/pretix-map"
 include-package-data = true
 
 [tool.setuptools.dynamic]
-version = {attr = "pretix_mapplugin.__version__"}
+version = { attr = "pretix_mapplugin.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["pretix*"]
