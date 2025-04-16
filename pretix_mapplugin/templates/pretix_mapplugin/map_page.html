@@ -6,62 +6,82 @@
 {% block title %}{% trans "Ticket Sales Map" %}{% endblock %}
 
 {% block inside %}
-    <h1>{% trans "Ticket Sales Map" %}</h1>
 
-    {# -- Controls Row -- #}
-    <div class="form-inline" style="margin-bottom: 1em;">
-        <div class="form-group" style="margin-right: 10px;">
-            <button id="view-toggle-btn" class="btn btn-default">Switch to Heatmap View</button>
+    <div class="plugin-map-content-wrapper">
+
+        <h1>{% trans "Ticket Sales Map" %}</h1>
+        
+        <div class="form-inline map-controls-row"
+             style="margin-bottom: 1em; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 15px;">
+
+            <div class="map-buttons-group" style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
+                <div class="form-group">
+                    <button id="view-toggle-btn" class="btn btn-default" disabled>Switch to Heatmap View</button>
+                </div>
+                <div class="form-group">
+                    <button id="cluster-toggle-btn" class="btn btn-default" disabled style="display: inline-block;">
+                        Disable Clustering
+                    </button>
+                </div>
+            </div>
+            <div id="heatmap-options-panel" class="panel panel-default"
+                 style="display: none; padding: 10px 15px; border-radius: 4px; min-width: 350px;">
+                <h5 style="margin-top: 0; margin-bottom: 10px;">{% trans "Heatmap Options" %}</h5>
+                <div class="form-horizontal">
+                    <div class="form-group form-group-sm" style="margin-bottom: 5px;">
+                        <label for="heatmap-radius" class="col-sm-3 control-label"
+                               style="padding-top: 5px;">Radius</label>
+                        <div class="col-sm-7">
+                            <input type="range" id="heatmap-radius" class="form-control" min="1" max="100" value="25"
+                                   step="1" disabled>
+                        </div>
+                        <div class="col-sm-2">
+                            <span id="radius-value" class="form-control-static">25</span>
+                        </div>
+                    </div>
+                    <div class="form-group form-group-sm" style="margin-bottom: 5px;">
+                        <label for="heatmap-blur" class="col-sm-3 control-label" style="padding-top: 5px;">Blur</label>
+                        <div class="col-sm-7">
+                            <input type="range" id="heatmap-blur" class="form-control" min="1" max="50" value="15"
+                                   step="1" disabled>
+                        </div>
+                        <div class="col-sm-2">
+                            <span id="blur-value" class="form-control-static">15</span>
+                        </div>
+                    </div>
+                    <div class="form-group form-group-sm" style="margin-bottom: 5px;">
+                        <label for="heatmap-maxZoom" class="col-sm-3 control-label" style="padding-top: 5px;">Max
+                            Zoom</label>
+                        <div class="col-sm-7">
+                            <input type="range" id="heatmap-maxZoom" class="form-control" min="1" max="18" value="18"
+                                   step="1" disabled>
+                        </div>
+                        <div class="col-sm-2">
+                            <span id="maxzoom-value" class="form-control-static">18</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
-        {# -- NEW Cluster Toggle Button -- #}
-        <div class="form-group" style="margin-right: 10px;">
-            <button id="cluster-toggle-btn" class="btn btn-default" disabled>Disable Clustering</button>
+
+        <div class="map-wrapper" style="position: relative; border: 1px solid #ccc; flex-grow: 1; min-height: 0;">
+            <div id="sales-map-container"
+                 data-data-url="{% url 'plugins:pretix_mapplugin:event.settings.salesmap.data' organizer=request.organizer.slug event=request.event.slug %}">
+            </div>
+            <div id="map-status-overlay"
+                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.8); z-index: 1000; display: flex; justify-content: center; align-items: center; text-align: center;">
+                <p>Loading map data...</p>
+            </div>
         </div>
-        {# -- End Cluster Toggle Button -- #}
     </div>
-    {# -- End Controls Row -- #}
 
-    {# -- NEW Heatmap Options Panel (Initially hidden for pins view) -- #}
-    <div id="heatmap-options-panel" class="panel panel-default"
-         style="display: none; padding: 15px; margin-bottom: 1em; max-width: 400px;">
-        <h4>{% trans "Heatmap Options" %}</h4>
-        <div class="form-group">
-            <label for="heatmap-radius">Radius: <span id="radius-value">25</span></label>
-            <input type="range" id="heatmap-radius" class="form-control" min="1" max="100" value="25" step="1" disabled>
-        </div>
-        <div class="form-group">
-            <label for="heatmap-blur">Blur: <span id="blur-value">15</span></label>
-            <input type="range" id="heatmap-blur" class="form-control" min="1" max="50" value="15" step="1" disabled>
-        </div>
-        <div class="form-group">
-            <label for="heatmap-maxZoom">Max Zoom: <span id="maxzoom-value">18</span></label>
-            <input type="range" id="heatmap-maxZoom" class="form-control" min="1" max="18" value="18" step="1" disabled>
-        </div>
-        {# Add more options like gradient if desired later #}
-    </div>
-    {# -- End Heatmap Options Panel -- #}
-
-
-    {# -- Map Area -- #}
-    <div style="position: relative; border: 1px solid #ccc;">
-        <div id="sales-map-container"
-             data-data-url="{% url 'plugins:pretix_mapplugin:event.settings.salesmap.data' organizer=request.organizer.slug event=request.event.slug %}">
-        </div>
-        <div id="map-status-overlay"
-             style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.8); z-index: 1000; display: flex; justify-content: center; align-items: center; text-align: center;">
-            <p>Loading map data...</p>
-        </div>
-    </div>
-    {# -- End Map Area -- #}
-
-
-    {# === Leaflet & Plugins (Keep as is) === #}
-    <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet-heat.js' %}"></script>
+    <script src="
+            {% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet-heat.js' %}"></script>
     <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.css' %}"/>
-    <link rel="stylesheet" href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.Default.css' %}"/>
+    <link rel="stylesheet"
+          href="{% static 'pretix_mapplugin/libs/leaflet-sales-map/MarkerCluster.Default.css' %}"/>
     <script src="{% static 'pretix_mapplugin/libs/leaflet-sales-map/leaflet.markercluster.js' %}"></script>
 
-    {# === Your JS/CSS (Keep as is) === #}
     <script src="{% static 'pretix_mapplugin/js/salesmap.js' %}"></script>
     <link rel="stylesheet" href="{% static 'pretix_mapplugin/css/salesmap.css' %}"/>
 

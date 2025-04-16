@@ -1,7 +1,7 @@
 .plugin-map-content-wrapper {
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 200px);
+    height: calc(100vh - 100px);
     min-height: 450px;
 }
 

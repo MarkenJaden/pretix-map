@@ -1,6 +1,8 @@
 import logging
+import time  # Import time for sleep
 from django.core.management.base import BaseCommand, CommandError
 from django.core.exceptions import FieldDoesNotExist, ObjectDoesNotExist
+from django.db import transaction
 
 # --- Import Pretix Global Settings accessor ---
 from django_scopes import scope
@@ -8,7 +10,6 @@ from django_scopes import scope
 # Check if Pretix version uses AbstractSettingsHolder or GlobalSettingsObject
 # Adjust import based on Pretix version if needed. Assume AbstractSettingsHolder for newer Pretix.
 try:
-    # Newer Pretix often uses this pattern via AbstractSettingsHolder
     from pretix.base.settings import GlobalSettingsObject as SettingsProxy
 except ImportError:
     try:
@@ -31,38 +32,40 @@ except ImportError:
 # --- Import necessary Pretix models ---
 from pretix.base.models import Order, Event, Organizer
 
-# --- Import your Geocode model and the task ---
+# --- Import your Geocode model and geocoding functions ---
 from pretix_mapplugin.models import OrderGeocodeData
-from pretix_mapplugin.tasks import geocode_order_task
-# --- Import Default User-Agent ---
-from pretix_mapplugin.geocoding import DEFAULT_NOMINATIM_USER_AGENT
+# --- Import geocoding functions directly, NOT the task ---
+from pretix_mapplugin.geocoding import (
+    geocode_address,
+    get_formatted_address_from_order,
+    DEFAULT_NOMINATIM_USER_AGENT
+)
 
 logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = 'Scans paid orders and queues geocoding tasks for those missing geocode data.'
+    help = ('Scans paid orders and geocodes addresses for those missing geocode data directly '
+            'within the command, respecting Nominatim rate limits (approx 1 req/sec). '
+            'This can take a long time for many orders.')
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--organizer',
-            type=str,
-            help='Slug of a specific organizer to process orders for.',
+            '--organizer', type=str, help='Slug of a specific organizer to process orders for.',
         )
         parser.add_argument(
-            '--event',
-            type=str,
-            help='Slug of a specific event to process orders for. Requires --organizer.',
+            '--event', type=str, help='Slug of a specific event to process orders for. Requires --organizer.',
         )
         parser.add_argument(
-            '--dry-run',
-            action='store_true',
-            help='Simulate the process without actually queuing tasks.',
+            '--dry-run', action='store_true', help='Simulate without geocoding or saving.',
         )
         parser.add_argument(
-            '--force-recode',
-            action='store_true',
-            help='Queue geocoding even for orders that already have geocode data.',
+            '--force-recode', action='store_true',
+            help='Geocode even for orders that already have geocode data.',
+        )
+        parser.add_argument(
+            '--delay', type=float, default=1.1,
+            help='Delay in seconds between geocoding requests (default: 1.1 to be safe). Set to 0 to disable.'
         )
 
     def handle(self, *args, **options):
@@ -70,6 +73,14 @@ class Command(BaseCommand):
         event_slug = options['event']
         dry_run = options['dry_run']
         force_recode = options['force_recode']
+        delay = options['delay']
+
+        if delay < 1.0 and delay != 0:  # Allow disabling delay with 0
+            self.stdout.write(self.style.WARNING(
+                f"Delay is {delay}s, which is less than 1 second. This may violate Nominatim usage policy."))
+        elif delay == 0:
+            self.stdout.write(
+                self.style.WARNING("Delay is disabled (--delay 0). Ensure you comply with geocoding service terms."))
 
         if event_slug and not organizer_slug:
             raise CommandError("You must specify --organizer when using --event.")
@@ -78,8 +89,6 @@ class Command(BaseCommand):
         user_agent = DEFAULT_NOMINATIM_USER_AGENT
         try:
             gs = SettingsProxy()
-            # Construct the setting key specific to plugins
-            # The format 'plugin:plugin_name:setting_name' is common
             setting_key = 'plugin:pretix_mapplugin:nominatim_user_agent'
             # Use .get() which is safer for dictionaries possibly returned by load_config
             user_agent = getattr(gs, 'settings', {}).get(setting_key, DEFAULT_NOMINATIM_USER_AGENT)
@@ -90,136 +99,173 @@ class Command(BaseCommand):
                     f"'{setting_key}' in your pretix.cfg."
                 ))
         except Exception as e:
-            # Catch broad exception during settings access
             self.stderr.write(self.style.ERROR(f"Failed to read plugin settings: {e}. Using default User-Agent."))
-            # Continue with default user_agent
         # --- End Read User-Agent ---
 
         # --- Determine which organizers to process ---
         organizers_to_process = []
         if organizer_slug:
             try:
-                # Fetch specific organizer (outside scope)
                 organizer = Organizer.objects.get(slug=organizer_slug)
                 organizers_to_process.append(organizer)
                 self.stdout.write(f"Processing specified organizer: {organizer.name} ({organizer_slug})")
             except Organizer.DoesNotExist:
                 raise CommandError(f"Organizer with slug '{organizer_slug}' not found.")
         else:
-            # Fetch all organizers (outside scope)
             organizers_to_process = list(Organizer.objects.all())
             self.stdout.write(f"Processing all {len(organizers_to_process)} organizers...")
 
         # --- Initialize counters ---
-        total_queued = 0
-        total_skipped = 0
-        total_processed_orders = 0
+        total_processed_count = 0  # Orders actually attempted (had address or forced)
+        total_geocoded_success = 0
+        total_geocode_failed = 0  # Geocoder returned None
+        total_skipped_no_address = 0
+        total_skipped_db_error = 0
+        total_checked_count = 0  # All orders matching initial filter
 
-        # --- Iterate through organizers and activate scope ---
+        # --- Iterate through organizers ---
         for organizer in organizers_to_process:
             self.stdout.write(f"\n--- Processing Organizer: {organizer.name} ({organizer.slug}) ---")
-            current_organizer_pk = organizer.pk  # Get the PK needed for the task kwarg
+            # current_organizer_pk = organizer.pk # No longer needed for task
 
             with scope(organizer=organizer):
-                # --- Get orders within scope ---
-                orders_qs = Order.objects.filter(status=Order.STATUS_PAID)
+                # --- Get orders ---
+                orders_qs = Order.objects.filter(status=Order.STATUS_PAID).select_related(
+                    'invoice_address', 'event'
+                )
 
-                # --- Filter by event if specified ---
+                # --- Filter by event ---
                 if event_slug and organizer.slug == organizer_slug:
                     try:
                         event = Event.objects.get(slug=event_slug)
                         orders_qs = orders_qs.filter(event=event)
-                        self.stdout.write(f"  Filtering orders for event: {event.name} ({event_slug})")
+                        self.stdout.write(f"  Filtering for event: {event.name} ({event_slug})")
                     except Event.DoesNotExist:
-                        self.stderr.write(self.style.WARNING(
-                            f"  Event '{event_slug}' not found for this organizer. Skipping event filter."))
-                        # If filtering by event and it's not found for this org, skip this org entirely
-                        if organizer_slug and event_slug:
-                            self.stdout.write(
-                                f"  Skipping organizer '{organizer.slug}' as specified event was not found.")
-                            continue  # Move to the next organizer
+                        self.stderr.write(
+                            self.style.WARNING(f"  Event '{event_slug}' not found. Skipping event filter."))
+                        if organizer_slug and event_slug: continue
 
-                # --- Filter orders needing geocoding ---
-                relation_name = 'geocode_data'  # Ensure this matches your model's related_name
-                if not force_recode:
-                    try:
-                        Order._meta.get_field(relation_name)  # Check existence
-                        # Filter orders that don't have the related geocode entry
-                        orders_to_process_qs = orders_qs.filter(**{f'{relation_name}__isnull': True})
-                        self.stdout.write("  Selecting paid orders missing geocode data...")
-                    except FieldDoesNotExist:
-                        # This indicates a code/model setup error, stop for this org
-                        self.stderr.write(self.style.ERROR(
-                            f"  Configuration Error: Reverse relation '{relation_name}' not found on Order model. Check OrderGeocodeData model definition (related_name). Skipping organizer '{organizer.slug}'."))
-                        continue  # Skip this organizer
-                    except Exception as e:
-                        # Catch other potential errors during query construction
-                        self.stderr.write(self.style.ERROR(
-                            f"  Error checking relation '{relation_name}': {e}. Skipping organizer '{organizer.slug}'."))
-                        continue  # Skip this organizer
+                # --- Determine which orders to process ---
+                relation_name = 'geocode_data'  # Check model
+                orders_to_geocode_list = []
+                current_checked_count = orders_qs.count()  # Count before filtering for geocode status
+                total_checked_count += current_checked_count
+
+                if force_recode:
+                    orders_to_geocode_list = list(orders_qs)
+                    self.stdout.write(self.style.WARNING(
+                        f"  Will process all {len(orders_to_geocode_list)} orders (--force-recode)..."))
                 else:
-                    # If forcing, process all orders that matched the initial filters (paid, event)
-                    orders_to_process_qs = orders_qs
-                    self.stdout.write(
-                        self.style.WARNING("  Processing ALL selected paid orders (--force-recode specified)..."))
-
-                # --- Process orders for this scope ---
-                current_org_orders_count = orders_to_process_qs.count()  # Count orders to queue
-                all_checked_for_org = orders_qs.count()  # Count all orders checked for this filter set
-                total_processed_orders += all_checked_for_org  # Add to overall total
-
-                if current_org_orders_count == 0:
-                    self.stdout.write(f"  No orders need geocoding ({all_checked_for_org} checked).")
-                    continue  # Skip to next organizer
-
-                self.stdout.write(
-                    f"  Found {current_org_orders_count} order(s) to potentially geocode ({all_checked_for_org} checked).")
-                org_queued = 0
-                org_skipped = 0
-
-                # Iterate and queue tasks
-                for order in orders_to_process_qs.iterator():  # Use iterator for memory efficiency
-                    if dry_run:
-                        # Provide slightly more info in dry run
+                    try:
+                        Order._meta.get_field(relation_name)
+                        existing_pks = set(OrderGeocodeData.objects.filter(
+                            order__in=orders_qs
+                        ).values_list('order_id', flat=True))
+                        orders_to_geocode_list = list(orders_qs.exclude(pk__in=existing_pks))
                         self.stdout.write(
-                            f"    [DRY RUN] Would queue Order: {order.code} (PK: {order.pk}, Org PK: {current_organizer_pk}) Event: {order.event.slug}")
-                        org_queued += 1
-                    else:
-                        try:
-                            # --- Pass user_agent AND organizer_pk to the task ---
-                            geocode_order_task.apply_async(
-                                args=[order.pk],  # Positional arg is order_pk
-                                kwargs={
-                                    'nominatim_user_agent': user_agent,
-                                    'organizer_pk': current_organizer_pk  # Pass organizer PK
-                                }
-                            )
-                            # Don't log every single queue success unless verbose requested
-                            org_queued += 1
-                        except Exception as e:
-                            # Log error if queueing fails
-                            self.stderr.write(self.style.ERROR(
-                                f"    ERROR queuing task for Order {order.code} (PK: {order.pk}): {e}"))
-                            logger.exception(f"Failed to queue geocoding task via command for order {order.code}: {e}")
-                            org_skipped += 1
+                            f"  Found {len(orders_to_geocode_list)} orders missing geocode data (out of {current_checked_count} checked).")
+                    except FieldDoesNotExist:
+                        self.stderr.write(
+                            self.style.ERROR(f"  Relation '{relation_name}' not found. Skipping organizer."))
+                        continue
+                    except Exception as e:
+                        self.stderr.write(self.style.ERROR(f"  Error checking relation: {e}. Skipping organizer."))
+                        continue
 
-                # Report summary for the current organizer
-                self.stdout.write(f"  Finished Organizer: Queued: {org_queued}, Skipped: {org_skipped}.")
-                total_queued += org_queued
-                total_skipped += org_skipped
-            # End scope 'with' block
+                if not orders_to_geocode_list:
+                    self.stdout.write("  No orders require geocoding for this selection.")
+                    continue
+
+                # --- Process Orders Sequentially ---
+                count_this_org = 0
+                org_geocoded = 0
+                org_failed = 0
+                org_skipped_no_addr = 0
+                org_skipped_db = 0
+
+                for i, order in enumerate(orders_to_geocode_list):
+                    count_this_org += 1
+                    self.stdout.write(
+                        f"  Processing order {count_this_org}/{len(orders_to_geocode_list)}: {order.code} ...",
+                        ending="")
+
+                    address_str = get_formatted_address_from_order(order)
+                    if not address_str:
+                        self.stdout.write(self.style.WARNING(" No address. Skipping."))
+                        total_skipped_no_address += 1
+                        org_skipped_no_addr += 1
+                        # Save null coords to prevent re-processing if not forcing
+                        if not dry_run and not force_recode:
+                            try:
+                                with transaction.atomic():
+                                    OrderGeocodeData.objects.update_or_create(order=order, defaults={'latitude': None,
+                                                                                                     'longitude': None})
+                            except Exception as db_err:
+                                self.stdout.write(self.style.ERROR(f" FAILED (DB Error saving null: {db_err})"))
+                                logger.exception(
+                                    f"Failed to save null geocode data via command for order {order.code}: {db_err}")
+                                total_skipped_db_error += 1
+                                org_skipped_db += 1
+                        continue  # Move to next order
+
+                    # Only increment this if we actually attempt geocoding
+                    total_processed_count += 1
+
+                    if dry_run:
+                        self.stdout.write(self.style.SUCCESS(" [DRY RUN] Would geocode."))
+                        org_geocoded += 1  # Simulate success for dry run count
+                    else:
+                        # --- Perform Geocoding Directly ---
+                        coordinates = geocode_address(address_str, nominatim_user_agent=user_agent)
+
+                        # --- Save Result ---
+                        try:
+                            with transaction.atomic():
+                                obj, created = OrderGeocodeData.objects.update_or_create(
+                                    order=order,
+                                    defaults={'latitude': coordinates[0] if coordinates else None,
+                                              'longitude': coordinates[1] if coordinates else None}
+                                )
+                            if coordinates:
+                                self.stdout.write(
+                                    self.style.SUCCESS(f" OK ({coordinates[0]:.4f}, {coordinates[1]:.4f})"))
+                                org_geocoded += 1
+                            else:
+                                self.stdout.write(self.style.WARNING(" FAILED (Geocode returned None)"))
+                                org_failed += 1
+                        except Exception as e:
+                            self.stdout.write(self.style.ERROR(f" FAILED (DB Error: {e})"))
+                            logger.exception(f"Failed to save geocode data via command for order {order.code}: {e}")
+                            org_skipped_db += 1  # Count DB errors separately
+
+                        # --- Apply Delay ---
+                        if delay > 0 and i < len(
+                                orders_to_geocode_list) - 1:  # Don't sleep after the last one or if delay is 0
+                            time.sleep(delay)
+
+                # Add org counts to totals
+                total_geocoded_success += org_geocoded
+                total_geocode_failed += org_failed
+                total_skipped_db_error += org_skipped_db
+
+                self.stdout.write(f"  Finished Organizer: Succeeded: {org_geocoded}, Failed Geocode: {org_failed}, "
+                                  f"Skipped (No Addr): {org_skipped_no_addr}, Skipped (DB Err): {org_skipped_db}.")
+            # End scope
 
         # --- Final Overall Report ---
         self.stdout.write("=" * 40)
-        self.stdout.write("Overall Summary:")
+        self.stdout.write("Overall Geocoding Summary:")
         self.stdout.write(f"  Organizers processed: {len(organizers_to_process)}")
-        self.stdout.write(f"  Total orders checked (paid, matching filters): {total_processed_orders}")
+        self.stdout.write(f"  Total Orders Checked (paid, matching filters): {total_checked_count}")
+        self.stdout.write(f"  Total Orders Attempted (had address or forced): {total_processed_count}")
         if dry_run:
-            self.stdout.write(
-                self.style.SUCCESS(f"[DRY RUN] Complete. Would have queued tasks for {total_queued} order(s)."))
+            self.stdout.write(self.style.SUCCESS(
+                f"[DRY RUN] Complete. Would have attempted geocoding for {total_processed_count} orders "
+                f"(+ {total_skipped_no_address} skipped due to no address)."))
         else:
-            self.stdout.write(self.style.SUCCESS(f"Complete. Successfully queued tasks for {total_queued} order(s)."))
-            if total_skipped > 0:
-                self.stdout.write(self.style.WARNING(
-                    f"Skipped {total_skipped} order(s) total due to errors during queueing (check logs)."))
+            self.stdout.write(self.style.SUCCESS(f"  Successfully Geocoded & Saved: {total_geocoded_success}"))
+            self.stdout.write(self.style.WARNING(f"  Geocoding Failed (None returned): {total_geocode_failed}"))
+            self.stdout.write(f"  Skipped (No Address): {total_skipped_no_address}")
+            if total_skipped_db_error > 0:
+                self.stdout.write(self.style.ERROR(f"  Skipped (DB Save Error): {total_skipped_db_error} (check logs)"))
         self.stdout.write("=" * 40)
