@@ -2,89 +2,112 @@ import logging
 from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
 
+# --- Import django-scopes ---
+from django_scopes import scope
+
 # --- Use Pretix Celery app instance ---
 from pretix.celery_app import app
 # --- Import necessary Pretix models ---
-from pretix.base.models import Order
+from pretix.base.models import Order, Organizer  # Import Organizer
 
 # --- Import your Geocode model and geocoding functions ---
 from .models import OrderGeocodeData
 from .geocoding import (
     get_formatted_address_from_order,
     geocode_address,
-    DEFAULT_NOMINATIM_USER_AGENT  # Import default for safety/logging
+    DEFAULT_NOMINATIM_USER_AGENT
 )
 
 logger = logging.getLogger(__name__)
 
 
-# Define the Celery task
-# bind=True gives access to self (the task instance) for retrying
-# ignore_result=True as we don't need the return value stored in Celery backend
 @app.task(bind=True, max_retries=3, default_retry_delay=60, ignore_result=True)
-def geocode_order_task(self, order_pk: int,
-                       nominatim_user_agent: str | None = None):  # Added nominatim_user_agent kwarg
+# --- Accept organizer_pk as kwarg ---
+def geocode_order_task(self, order_pk: int, organizer_pk: int | None = None, nominatim_user_agent: str | None = None):
     """
     Celery task to geocode the address for a given order PK.
-    Accepts the Nominatim User-Agent as an argument.
+    Accepts organizer_pk and Nominatim User-Agent as arguments.
+    Fetches Organizer first, then activates scope.
     """
+    organizer = None
+    order = None
     try:
-        # Fetch order with related address and country data efficiently
-        order = Order.objects.select_related(
-            'invoice_address',
-        ).get(pk=order_pk)
-        logger.info(f"Starting geocoding task for Order {order.code} (PK: {order_pk})")
+        # --- Step 1: Fetch Organizer (unscoped) ---
+        if organizer_pk is None:
+            # This should ideally not happen if called correctly, but handle defensively
+            logger.error(f"organizer_pk not provided for Order PK {order_pk}. Cannot activate scope.")
+            # Depending on policy, you might retry, skip, or raise an error.
+            # Skipping for now.
+            return
 
-        # Check if already geocoded to prevent redundant work
-        # Replace 'geocode_data' if your related_name is different
-        relation_name = 'geocode_data'  # Ensure this matches your OrderGeocodeData.order related_name
-        if hasattr(order, relation_name) and getattr(order, relation_name) is not None:
-            logger.info(f"Geocode data already exists for Order {order.code}. Skipping.")
-            return  # Exit successfully
+        try:
+            organizer = Organizer.objects.get(pk=organizer_pk)
+        except ObjectDoesNotExist:
+            logger.error(f"Organizer with PK {organizer_pk} not found (for Order PK {order_pk}).")
+            # Don't retry if organizer doesn't exist
+            return
 
-        # 1. Get formatted address string
-        address_str = get_formatted_address_from_order(order)
-        if not address_str:
-            logger.info(f"Order {order.code} has no address suitable for geocoding. Storing null coordinates.")
-            # Store null to prevent reprocessing
+        # --- Step 2: Activate Scope ---
+        with scope(organizer=organizer):
+            # --- Step 3: Fetch Order (now within scope) ---
+            try:
+                order = Order.objects.select_related(
+                    'invoice_address'  # Only need this direct relation now
+                ).get(pk=order_pk)
+            except ObjectDoesNotExist:
+                logger.error(f"Order with PK {order_pk} not found within scope of Org {organizer_pk}.")
+                # Don't retry if order doesn't exist in this scope
+                return
+
+            logger.info(
+                f"Starting geocoding task for Order {order.code} (PK: {order_pk}) within scope of Organizer '{organizer.slug}'")
+
+            # --- Rest of the logic runs within scope ---
+            relation_name = 'geocode_data'
+            if OrderGeocodeData.objects.filter(order_id=order_pk).exists():
+                logger.info(f"Geocode data already exists for Order {order.code} (checked within scope). Skipping.")
+                return
+
+            address_str = get_formatted_address_from_order(order)
+            if not address_str:
+                logger.info(f"Order {order.code} has no address suitable for geocoding. Storing null coordinates.")
+                with transaction.atomic():
+                    OrderGeocodeData.objects.update_or_create(
+                        order=order, defaults={'latitude': None, 'longitude': None}
+                    )
+                return
+
+            logger.debug(f"Attempting to geocode address for Order {order.code}: '{address_str}'")
+            coordinates = geocode_address(address_str, nominatim_user_agent=nominatim_user_agent)
+
             with transaction.atomic():
-                OrderGeocodeData.objects.update_or_create(
-                    order=order,
-                    defaults={'latitude': None, 'longitude': None}
-                )
-            return  # Exit successfully, nothing to geocode
+                if coordinates:
+                    latitude, longitude = coordinates
+                    obj, created = OrderGeocodeData.objects.update_or_create(
+                        order=order, defaults={'latitude': latitude, 'longitude': longitude}
+                    )
+                    log_level = logging.INFO if created else logging.DEBUG
+                    logger.log(log_level,
+                               f"Saved{' new' if created else ' updated'} geocode data for Order {order.code}: ({latitude}, {longitude})")
+                else:
+                    logger.warning(f"Geocoding failed for Order {order.code}. Storing null coordinates.")
+                    obj, created = OrderGeocodeData.objects.update_or_create(
+                        order=order, defaults={'latitude': None, 'longitude': None}
+                    )
+                    log_level = logging.INFO if created else logging.DEBUG
+                    logger.log(log_level,
+                               f"Saved{' new' if created else ' updated'} null geocode data for Order {order.code} after failed attempt.")
+        # --- Scope deactivated automatically ---
 
-        # 2. Perform geocoding, passing the user agent received by the task
-        logger.debug(f"Attempting to geocode address for Order {order.code}: '{address_str}'")
-        coordinates = geocode_address(address_str, nominatim_user_agent=nominatim_user_agent)
-
-        # 3. Store result (or null if failed) using atomic transaction
-        with transaction.atomic():
-            if coordinates:
-                latitude, longitude = coordinates
-                obj, created = OrderGeocodeData.objects.update_or_create(
-                    order=order,
-                    defaults={'latitude': latitude, 'longitude': longitude}
-                )
-                log_level = logging.INFO if created else logging.DEBUG  # Be less noisy on updates
-                logger.log(log_level,
-                           f"Saved{' new' if created else ' updated'} geocode data for Order {order.code}: ({latitude}, {longitude})")
-            else:
-                logger.warning(f"Geocoding failed for Order {order.code}. Storing null coordinates.")
-                # Store nulls to indicate an attempt was made and failed
-                obj, created = OrderGeocodeData.objects.update_or_create(
-                    order=order,
-                    defaults={'latitude': None, 'longitude': None}
-                )
-                log_level = logging.INFO if created else logging.DEBUG
-                logger.log(log_level,
-                           f"Saved{' new' if created else ' updated'} null geocode data for Order {order.code} after failed attempt.")
-
-    except ObjectDoesNotExist:  # More specific exception
-        logger.error(f"Order with PK {order_pk} not found in geocode_order_task.")
-        # Don't retry if the order doesn't exist
+    # --- Outer exception handling ---
+    except ObjectDoesNotExist:
+        # Should be caught earlier now, but keep for safety
+        obj_type = "Organizer" if organizer is None else "Order"
+        obj_pk = organizer_pk if organizer is None else order_pk
+        logger.error(f"{obj_type} with PK {obj_pk} not found.")
     except Exception as e:
-        # Catch any other unexpected errors
-        logger.exception(f"Unexpected error in geocode_order_task for Order PK {order_pk}: {e}")
-        # Retry on potentially temporary errors (database, network issues etc.)
-        raise self.retry(exc=e)  # Let Celery handle retry logic
+        org_info = f" (Org PK: {organizer_pk})" if organizer_pk else ""
+        order_info = f" (Order PK: {order_pk})" if order_pk else ""
+        logger.exception(f"Unexpected error in geocode_order_task{org_info}{order_info}: {e}")
+        # Retry on potentially temporary errors
+        raise self.retry(exc=e)
