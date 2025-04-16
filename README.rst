@@ -125,10 +125,12 @@ This command is essential for processing orders that were placed *before* the ma
 **Example Workflow:**
 
 1.  **Test with Dry Run (All Organizers):**
+
     .. code-block:: bash
 
         python manage.py geocode_existing_orders --dry-run
 2.  **(If satisfied) Run for Real (All Organizers):**
+
     .. code-block:: bash
 
         python manage.py geocode_existing_orders
