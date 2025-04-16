@@ -1,8 +1,36 @@
+.plugin-map-content-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 200px);
+    min-height: 450px;
+}
+
+.plugin-map-content-wrapper h1,
+.plugin-map-content-wrapper .form-group {
+    flex-shrink: 0;
+    margin-bottom: 1em;
+}
+
+.map-wrapper {
+    flex-grow: 1;
+    position: relative;
+    min-height: 0;
+    border: 1px solid #ccc;
+}
+
 #sales-map-container {
-    height: 500px;
+    height: 100%;
     width: 100%;
-    position: relative; /* Needed for Leaflet internal positioning */
-    background: #eee; /* Optional: Light background while tiles load */
+    display: block;
+    position: relative;
+}
+
+#map-status-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
 }
 
 #map-status-overlay p {
@@ -12,8 +40,13 @@
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
 }
 
-#map-status-overlay p.text-danger { /* Style for error messages */
-    color: #a94442; /* Bootstrap danger color */
-    background-color: #f2dede; /* Bootstrap danger background */
-    border-color: #ebccd1; /* Bootstrap danger border */
+#heatmap-options-panel input[type=range] {
+    width: 100%;
+    display: block;
+}
+
+#map-status-overlay p.text-danger {
+    color: #a94442;
+    background-color: #f2dede;
+    border-color: #ebccd1;
 }

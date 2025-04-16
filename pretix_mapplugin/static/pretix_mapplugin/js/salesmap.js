@@ -1,105 +1,117 @@
-// Wait for the DOM to be fully loaded before running map code
 document.addEventListener('DOMContentLoaded', function () {
-    console.log("Sales Map JS Loaded (FINAL TEST - INCLUDING TOGGLE)");
+    console.log("Sales Map JS Loaded (Cluster Toggle & Heatmap Opts)");
+
+    // --- L.Icon.Default setup ---
+    // Explicitly set the path to Leaflet's default icon images
+    try {
+        delete L.Icon.Default.prototype._getIconUrl;
+        L.Icon.Default.mergeOptions({
+            iconRetinaUrl: '/static/leaflet/images/marker-icon-2x.png', // Path within your collected static files
+            iconUrl: '/static/leaflet/images/marker-icon.png',         // Path within your collected static files
+            shadowUrl: '/static/leaflet/images/marker-shadow.png',     // Path within your collected static files
+            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34],
+            tooltipAnchor: [16, -28], shadowSize: [41, 41]
+        });
+        console.log("Set Leaflet default icon image paths explicitly.");
+    } catch (e) {
+        console.error("Error setting Leaflet default icon path:", e);
+        // Fallback might be needed for very old Leaflet versions
+        // L.Icon.Default.imagePath = '/static/leaflet/images/';
+    }
+    // --- End L.Icon.Default setup ---
+
 
     // --- Configuration ---
     const mapContainerId = 'sales-map-container';
     const statusOverlayId = 'map-status-overlay';
-    const toggleButtonId = 'view-toggle-btn';
-    const initialZoom = 5;
-    const defaultMapView = 'pins'; // Can be 'pins' or 'heatmap'
-    const heatmapOptions = {
+    const viewToggleButtonId = 'view-toggle-btn'; // Changed from toggleButtonId for clarity
+    const clusterToggleButtonId = 'cluster-toggle-btn';
+    const heatmapOptionsPanelId = 'heatmap-options-panel';
+    const initialZoom = 5; // Start more zoomed out
+    const defaultMapView = 'pins'; // Start with pins
+
+    // --- Globals & State ---
+    let map = null;
+    let coordinateData = []; // Stores {lat, lon, tooltip, order_url}
+    let pinLayer = null; // Holds L.markerClusterGroup OR L.layerGroup
+    let heatmapLayer = null;
+    let currentView = defaultMapView;
+    let dataUrl = null;
+    let isClusteringEnabled = true; // Default Cluster State: ON
+    let heatmapOptions = { // Default Heatmap Options (state variable)
         radius: 25,
         blur: 15,
         maxZoom: 18,
-        // max: 1.0, // Let leaflet-heat calculate max based on data density
-        minOpacity: 0.2
+        minOpacity: 0.2 // Example optional parameter
     };
 
-    // --- Globals ---
-    let map = null; // Leaflet map instance
-    let coordinateData = []; // To store fetched [{lat: Y, lon: X, tooltip: Z}, ...] objects
-    let pinLayer = null; // Layer for markers/clusters
-    let heatmapLayer = null; // Layer for heatmap
-    let currentView = defaultMapView; // Track current view state
-    let dataUrl = null; // To store the API endpoint URL
-
+    // --- DOM Elements ---
     const mapElement = document.getElementById(mapContainerId);
     const statusOverlay = document.getElementById(statusOverlayId);
-    const toggleButton = document.getElementById(toggleButtonId);
+    const viewToggleButton = document.getElementById(viewToggleButtonId);
+    const clusterToggleButton = document.getElementById(clusterToggleButtonId);
+    const heatmapOptionsPanel = document.getElementById(heatmapOptionsPanelId);
+    // Heatmap control elements
+    const heatmapRadiusInput = document.getElementById('heatmap-radius');
+    const heatmapBlurInput = document.getElementById('heatmap-blur');
+    const heatmapMaxZoomInput = document.getElementById('heatmap-maxZoom');
+    const radiusValueSpan = document.getElementById('radius-value');
+    const blurValueSpan = document.getElementById('blur-value');
+    const maxZoomValueSpan = document.getElementById('maxzoom-value');
 
-    // --- Helper to update status overlay ---
+    // --- Status Update Helpers ---
     function updateStatus(message, isError = false) {
         if (statusOverlay) {
             const p = statusOverlay.querySelector('p');
-            if (p) {
-                p.textContent = message;
-                p.className = isError ? 'text-danger' : ''; // Apply error class if needed
-            }
-            statusOverlay.style.display = 'flex'; // Make sure it's visible
-        } else {
-            console.warn("Status overlay element not found.");
-        }
+            if (p) { p.textContent = message; p.className = isError ? 'text-danger' : ''; }
+            statusOverlay.style.display = 'flex'; // Show overlay when status updates
+        } else { console.warn("Status overlay element not found."); }
     }
-
-    // --- Helper to hide status overlay ---
     function hideStatus() {
-        if (statusOverlay) {
-            statusOverlay.style.display = 'none'; // Hide the overlay
-        }
+        if (statusOverlay) { statusOverlay.style.display = 'none'; } // Hide overlay
     }
+    // --- End Status Helpers ---
+
 
     // --- Initialization ---
     function initializeMap() {
-        console.log("Initializing Leaflet map...");
+        // Check required elements
+        if (!mapElement) { console.error(`Map container #${mapContainerId} not found.`); return; }
+        if (!statusOverlay) { console.warn("Status overlay element not found."); }
+        // Check control elements (warn but continue if missing)
+        if (!viewToggleButton) console.warn("View toggle button not found.");
+        if (!clusterToggleButton) console.warn("Cluster toggle button not found.");
+        if (!heatmapOptionsPanel) console.warn("Heatmap options panel not found.");
+        if (!heatmapRadiusInput || !heatmapBlurInput || !heatmapMaxZoomInput) console.warn("Heatmap input elements missing.");
 
-        if (!mapElement) {
-            console.error(`Map container element #${mapContainerId} not found.`);
-            return; // Stop initialization if container is missing
-        }
-        if (!statusOverlay) {
-            console.warn("Status overlay not found");
-        }
-        if (!toggleButton) {
-            // Log a warning but don't necessarily stop if button is missing
-            console.warn(`Toggle button #${toggleButtonId} not found.`);
-        }
-
-        // --- Get the data URL from the container's data attribute ---
+        // Get Data URL
         dataUrl = mapElement.dataset.dataUrl;
         if (!dataUrl) {
-            console.error("Data URL not found in container's data-data-url attribute! Cannot fetch data.");
             updateStatus("Configuration Error: Missing data source URL.", true);
-            return; // Stop initialization if data URL is missing
+            return;
         }
         console.log(`Data URL found: ${dataUrl}`);
-        // --- End data URL retrieval ---
-
-        // Set Leaflet default image path (if needed, depends on static file setup)
-        L.Icon.Default.imagePath = '/static/leaflet/images/'; // Ensure this path is correct
-        console.log("Set Leaflet default imagePath to:", L.Icon.Default.imagePath);
-
-        console.log("Initializing Leaflet map...");
         updateStatus("Initializing map...");
+
+        // Create Leaflet Map
         try {
-            map = L.map(mapContainerId).setView([48.85, 2.35], initialZoom); // Default center
+            map = L.map(mapContainerId).setView([48.85, 2.35], initialZoom); // Centered somewhat on Europe
             console.log("L.map() called successfully.");
 
-            console.log("Adding Tile Layer...");
+            // Add Base Tile Layer
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            }).addTo(map);
+                 attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                 maxZoom: 18, // Standard max zoom
+            }).on('load', function() { console.log('Base tiles loaded.'); }).addTo(map);
             console.log("Tile layer added successfully.");
 
-            // Setup toggle button listener if it exists
-            if (toggleButton) {
-                setupToggleButton(); // Call setup function
-            } else {
-                console.log("Toggle button not found, skipping listener setup.");
-            }
+            // Setup Controls (Event Listeners)
+            if (viewToggleButton) setupViewToggleButton();
+            if (clusterToggleButton) setupClusterToggleButton();
+            setupHeatmapControls(); // Setup listeners even if panel hidden
 
-            // Fetch data and populate the map layers
-            fetchCoordinateData();
+            // Fetch data to populate layers
+            fetchDataAndDraw();
 
         } catch (error) {
             console.error("ERROR during Leaflet initialization:", error);
@@ -107,272 +119,324 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // --- Data Fetching ---
-    function fetchCoordinateData() {
-        // dataUrl should be set during initialization
-        if (!dataUrl) {
-            console.error("Cannot fetch data: dataUrl is not set.");
-            return;
-        }
 
+    // --- Data Fetching & Initial Drawing ---
+    function fetchDataAndDraw() {
+        if (!dataUrl) return;
         console.log("Fetching coordinates from:", dataUrl);
-        updateStatus("Loading ticket locations..."); // Update status
+        updateStatus("Loading ticket locations...");
+        // Disable controls while loading
+        if(viewToggleButton) viewToggleButton.disabled = true;
+        if(clusterToggleButton) clusterToggleButton.disabled = true;
+        disableHeatmapControls(true);
 
         fetch(dataUrl)
             .then(response => {
-                if (!response.ok) {
-                    // Throw an error with status text to be caught below
-                    throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
-                }
-                return response.json();
-            })
+                 if (!response.ok) throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
+                 return response.json();
+             })
             .then(data => {
-                if (data.error) { // Check for application-level errors from the backend
-                    throw new Error(`API Error: ${data.error}`);
-                }
-                // --- Adjust check for the new data structure ---
+                if (data.error) throw new Error(`API Error: ${data.error}`);
                 if (!data || !data.locations || !Array.isArray(data.locations)) {
-                    console.warn("Invalid or empty data format received:", data);
-                    updateStatus("No valid geocoded ticket locations found.", false); // Inform user
-                    if (toggleButton) toggleButton.disabled = true; // Disable button if no data
-                    coordinateData = []; // Ensure it's empty
-                    return; // Stop processing if data is missing/invalid
+                     console.warn("Invalid or empty data format received:", data);
+                     updateStatus("No valid geocoded ticket locations found.", false);
+                     coordinateData = []; hideStatus(); return;
                 }
                 if (data.locations.length === 0) {
                     console.log("No coordinate data received (empty list).");
                     updateStatus("No geocoded ticket locations found for this event.", false);
-                    if (toggleButton) toggleButton.disabled = true;
-                    coordinateData = [];
-                    return;
+                    coordinateData = []; hideStatus(); return;
                 }
-                // --- End structure check ---
 
-                coordinateData = data.locations; // Store the [{lat: Y, lon: X, tooltip: Z}, ...] array
+                coordinateData = data.locations;
                 console.log(`Received ${coordinateData.length} coordinates.`);
 
-                // --- Create layers (but don't add to map yet) ---
-                createMapLayers();
+                // Enable controls now that we have data
+                if(viewToggleButton) viewToggleButton.disabled = false;
+                // Only enable cluster button if in pins view initially and data exists
+                if(clusterToggleButton) clusterToggleButton.disabled = (currentView !== 'pins');
+                // Only enable heatmap controls if data exists
+                disableHeatmapControls(false);
 
-                // --- Show the default view ---
+                // Create both layers based on fetched data
+                createAllLayers();
+                // Display the default layer
                 showCurrentView();
-
-                // Adjust map bounds to fit markers if coordinates were found
+                // Adjust bounds to fit the data
                 adjustMapBounds();
 
-                // Enable button if it was disabled and we got data
-                if (toggleButton) toggleButton.disabled = false;
-                hideStatus();
+                hideStatus(); // Hide loading overlay
 
-                // Force redraw just in case (sometimes needed after dynamic content/bounds changes)
+                // Force redraw after a short delay
                 setTimeout(function () {
                     console.log("Forcing map.invalidateSize() after data load...");
-                    console.log("Map container element just before invalidateSize:", document.getElementById(mapContainerId)); // Check if it exists here
-                    if (map && document.getElementById(mapContainerId)) { // Add check before calling
-                        map.invalidateSize();
+                    const container = document.getElementById(mapContainerId);
+                    if (map && container && container.offsetWidth > 0) {
+                         map.invalidateSize();
                     } else {
-                        console.warn("Skipping invalidateSize because map or container is missing.");
+                         console.warn(`Skipping invalidateSize. Map: ${!!map}, Container: ${!!container}, OffsetWidth: ${container ? container.offsetWidth : 'N/A'}`);
                     }
                 }, 100);
-
             })
             .catch(error => {
                 console.error('Error fetching or processing coordinate data:', error);
-                console.log("Map container element during fetch error:", document.getElementById(mapContainerId)); // Check if it exists here
-                updateStatus(`Error loading map data: ${error.message}. Please try again later.`, true); // Show error in overlay
-                if (toggleButton) toggleButton.disabled = true;
+                updateStatus(`Error loading map data: ${error.message}. Please try again later.`, true);
+                // Keep controls disabled on error
             });
     }
 
-    // --- Layer Creation ---
-    function createMapLayers() {
-        if (!map || coordinateData.length === 0) {
-            console.log("Skipping layer creation (no map or data).");
-            return;
-        }
 
-        // 1. Create Pin Layer (using MarkerCluster)
-        console.log("Creating pin layer instance (marker cluster)...");
-        pinLayer = L.markerClusterGroup(); // Initialize cluster group
-        coordinateData.forEach((loc, index) => { // loc is now {lat, lon, tooltip, order_url}
-            try {
-                if (loc.lat == null || loc.lon == null) { /* ... skip invalid ... */
-                    return;
-                }
-                const latLng = L.latLng(loc.lat, loc.lon);
-                if (isNaN(latLng.lat) || isNaN(latLng.lng)) { /* ... skip invalid ... */
-                    return;
-                }
-
-                const marker = L.marker(latLng);
-
-                // --- Use the enhanced tooltip from backend ---
-                // Leaflet tooltips handle HTML content by default
-                if (loc.tooltip) {
-                    marker.bindTooltip(loc.tooltip);
-                }
-                // --- End Tooltip ---
-
-                // --- Add Click Listener to open order URL ---
-                if (loc.order_url) { // Only add listener if URL was successfully generated
-                    marker.on('click', function () {
-                        console.log(`Marker clicked, opening URL: ${loc.order_url}`);
-                        // Open in a new tab, which is usually better for control panel links
-                        window.open(loc.order_url, '_blank');
-                        // If you prefer opening in the same tab:
-                        // window.location.href = loc.order_url;
-                    });
-                } else {
-                    // Log if URL is missing for a marker, maybe backend issue
-                    console.warn(`Order URL missing for coordinate index ${index}, click disabled for this marker.`);
-                }
-                // --- End Click Listener ---
-
-                pinLayer.addLayer(marker); // Add marker to cluster group
-
-            } catch (e) {
-                console.error(`Error creating marker for coordinate ${index}:`, loc, e);
-            }
-        });
-        console.log("Pin layer instance created with markers (incl. tooltips and clicks).");
-
-
-        // 2. Create Heatmap Layer (No changes needed here)
-        console.log("Creating heatmap layer instance...");
-        try {
-            const heatPoints = coordinateData.map(loc => {
-                if (loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon)) {
-                    return [loc.lat, loc.lon, 1.0];
-                }
-                return null;
-            }).filter(p => p !== null);
-
-            if (heatPoints.length > 0) {
-                heatmapLayer = L.heatLayer(heatPoints, heatmapOptions);
-                console.log("Heatmap layer instance created.");
-            } else { /* ... handle no valid points ... */
-                heatmapLayer = null;
-            }
-        } catch (e) { /* ... error handling ... */
-            heatmapLayer = null;
-        }
-
+    // --- Layer Creation Functions ---
+    function createAllLayers() {
+        // Orchestrates creation of both layer types
+        createPinLayer();
+        createHeatmapLayer();
         console.log("Map layer instances created/updated.");
     }
 
-    // --- Adjust Map Bounds ---
-    function adjustMapBounds() {
-        if (!map || coordinateData.length === 0) return;
+    function createPinLayer() {
+        // Creates/recreates the pin layer based on isClusteringEnabled state
+        console.log(`Creating pin layer instance (Clustering: ${isClusteringEnabled})...`);
+        pinLayer = null; // Clear previous instance
+        if (coordinateData.length === 0) { console.warn("No coordinate data for pin layer."); return; }
 
-        try {
-            let bounds = null;
-            // Prefer using marker cluster bounds if available and valid
-            if (pinLayer && typeof pinLayer.getBounds === 'function') {
-                bounds = pinLayer.getBounds();
-                console.log("Attempting to get bounds from pin layer (marker cluster).");
-            }
+        const markers = [];
+        coordinateData.forEach((loc, index) => {
+            try {
+                if (loc.lat == null || loc.lon == null || isNaN(loc.lat) || isNaN(loc.lon)) return;
+                const latLng = L.latLng(loc.lat, loc.lon);
+                const marker = L.marker(latLng);
+                if (loc.tooltip) marker.bindTooltip(loc.tooltip);
+                if (loc.order_url) { marker.on('click', () => window.open(loc.order_url, '_blank')); }
+                markers.push(marker);
+            } catch (e) { console.error(`Error creating marker ${index}:`, e); }
+        });
 
-            // If no valid bounds from cluster, or only heatmap exists, calculate from raw data
-            if (!bounds || !bounds.isValid()) {
-                console.log("Pin layer bounds invalid or unavailable, calculating bounds from raw coordinates.");
-                const latLngs = coordinateData
-                    .map(loc => {
-                        if (loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon)) {
-                            return [loc.lat, loc.lon];
-                        }
-                        return null;
-                    })
-                    .filter(p => p !== null);
+        if (markers.length === 0) { console.warn("No valid markers created for pin layer."); return; }
 
-                if (latLngs.length > 0) {
-                    bounds = L.latLngBounds(latLngs);
-                }
-            }
-
-            // Fit map to bounds if valid bounds were found
-            if (bounds && bounds.isValid()) {
-                console.log("Fitting map to calculated bounds...");
-                map.fitBounds(bounds, {padding: [50, 50]}); // Add padding
-                console.log("Bounds fitted.");
-            } else if (coordinateData.length === 1) {
-                // Special case for a single point
-                console.log("Only one valid coordinate, setting view directly.");
-                const singleCoord = coordinateData.find(loc => loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon));
-                if (singleCoord) {
-                    map.setView([singleCoord.lat, singleCoord.lon], 13); // Zoom level 13 for single point
-                } else {
-                    console.warn("Could not find the single valid coordinate to set view.");
-                }
-            } else {
-                console.warn("Could not determine valid bounds to fit the map.");
-            }
-        } catch (e) {
-            console.error("Error fitting map bounds:", e);
+        if (isClusteringEnabled) {
+            pinLayer = L.markerClusterGroup(); // Use clustering
+            pinLayer.addLayers(markers);
+            console.log("Marker cluster group created and populated.");
+        } else {
+            pinLayer = L.layerGroup(markers); // Use simple layer group
+            console.log("Simple layer group created and populated.");
         }
     }
 
-    // --- View Toggling ---
-    function setupToggleButton() {
-        updateButtonText(); // Set initial text
-        toggleButton.addEventListener('click', () => {
-            console.log("Toggle button clicked!");
-            currentView = (currentView === 'pins') ? 'heatmap' : 'pins';
-            showCurrentView(); // Update the map layers
-            updateButtonText(); // Update the button text
-        });
-        console.log("Toggle button listener setup complete.");
+    function createHeatmapLayer() {
+        // Creates/recreates the heatmap layer using current heatmapOptions
+        console.log("Creating heatmap layer instance...");
+        heatmapLayer = null; // Clear previous instance
+        if (coordinateData.length === 0) { console.warn("No coordinate data for heatmap layer."); return; }
+
+        try {
+            const heatPoints = coordinateData.map(loc => {
+                if (loc.lat != null && loc.lon != null && !isNaN(loc.lat) && !isNaN(loc.lon)) {
+                    return [loc.lat, loc.lon, 1.0]; // Intensity 1.0
+                } return null;
+            }).filter(p => p !== null);
+
+            if (heatPoints.length > 0) {
+                heatmapLayer = L.heatLayer(heatPoints, heatmapOptions); // Use state variable
+                console.log("Heatmap layer instance created with options:", heatmapOptions);
+            } else { console.warn("No valid points for heatmap layer."); }
+        } catch (e) { console.error("Error creating heatmap layer instance:", e); }
     }
 
-    function showCurrentView() {
-        console.log(`Showing view: ${currentView}`);
-        if (!map) {
-            console.warn("Map not initialized, cannot show view.");
+
+    // --- Layer Update Functions ---
+    function redrawPinLayer() {
+        // Removes existing pin layer, calls createPinLayer, adds new one if current view is 'pins'
+        if (!map) return;
+        console.log("Redrawing pin layer...");
+        if (pinLayer && map.hasLayer(pinLayer)) {
+            map.removeLayer(pinLayer);
+            console.log("Removed existing pin layer before redraw.");
+        }
+        pinLayer = null; // Ensure it's cleared
+        createPinLayer(); // Recreate based on current clustering state
+        if (currentView === 'pins' && pinLayer) {
+             console.log("Adding newly created pin layer to map.");
+             map.addLayer(pinLayer);
+        }
+    }
+
+    function updateHeatmap() {
+        // Updates options on the existing heatmap layer if it's present
+        if (!map || !heatmapLayer) {
+            console.warn("Cannot update heatmap: map or heatmap layer missing.");
+            return;
+        }
+        console.log("Updating heatmap options:", heatmapOptions);
+        try {
+             // Use Leaflet.heat's setOptions method
+             heatmapLayer.setOptions(heatmapOptions);
+             console.log("Heatmap options updated.");
+        } catch(e) {
+             console.error("Error setting heatmap options:", e);
+        }
+    }
+
+
+     // --- Adjust Map Bounds ---
+    function adjustMapBounds() {
+        // (Keep the working version from previous steps)
+        if (!map || coordinateData.length === 0) return;
+        try {
+            let bounds = null;
+            if (currentView === 'pins' && pinLayer && typeof pinLayer.getBounds === 'function') {
+                 bounds = pinLayer.getBounds();
+                 console.log("Attempting bounds from pin layer.");
+            }
+            if (!bounds || !bounds.isValid()) {
+                console.log("Calculating bounds from raw coordinates.");
+                const latLngs = coordinateData.map(loc => { /* ... filter valid ... */ return [loc.lat, loc.lon]; }).filter(p => p !== null);
+                if (latLngs.length > 0) bounds = L.latLngBounds(latLngs);
+            }
+            if (bounds && bounds.isValid()) {
+                console.log("Fitting map to bounds..."); map.fitBounds(bounds, { padding: [50, 50] }); console.log("Bounds fitted.");
+            } else if (coordinateData.length === 1) {
+                 console.log("Setting view for single coordinate.");
+                 const singleCoord = coordinateData.find(loc => /* ... valid ... */);
+                 if (singleCoord) map.setView([singleCoord.lat, singleCoord.lon], 13);
+                 else console.warn("Could not find single valid coordinate.");
+            } else { console.warn("Could not determine valid bounds."); }
+        } catch (e) { console.error("Error fitting map bounds:", e); }
+    }
+
+
+    // --- Control Setup Functions ---
+    function setupViewToggleButton() {
+        updateViewToggleButtonText(); // Initial text
+        viewToggleButton.addEventListener('click', () => {
+            console.log("View toggle button clicked!");
+            currentView = (currentView === 'pins') ? 'heatmap' : 'pins';
+            showCurrentView(); // Update map display
+            updateViewToggleButtonText(); // Update button text
+            // Enable/disable cluster button based on view
+            if (clusterToggleButton) clusterToggleButton.disabled = (currentView !== 'pins');
+        });
+        console.log("View toggle button listener setup complete.");
+    }
+
+    function setupClusterToggleButton() {
+        updateClusterToggleButtonText(); // Initial text
+        // Start disabled if not in pins view
+        clusterToggleButton.disabled = (currentView !== 'pins');
+        clusterToggleButton.addEventListener('click', () => {
+            if (currentView !== 'pins') return; // Safety check
+            console.log("Cluster toggle button clicked!");
+            isClusteringEnabled = !isClusteringEnabled; // Toggle state
+            redrawPinLayer(); // Recreate and potentially re-add the pin layer
+            updateClusterToggleButtonText(); // Update button text
+        });
+        console.log("Cluster toggle button listener setup complete.");
+    }
+
+    function setupHeatmapControls() {
+        // Check if all elements exist before adding listeners
+        if (!heatmapRadiusInput || !heatmapBlurInput || !heatmapMaxZoomInput || !radiusValueSpan || !blurValueSpan || !maxZoomValueSpan) {
+            console.error("One or more heatmap control elements not found. Cannot setup listeners.");
             return;
         }
 
-        // --- Safely remove existing layers ---
+        // Set initial display values from defaults
+        radiusValueSpan.textContent = heatmapOptions.radius;
+        heatmapRadiusInput.value = heatmapOptions.radius;
+        blurValueSpan.textContent = heatmapOptions.blur;
+        heatmapBlurInput.value = heatmapOptions.blur;
+        maxZoomValueSpan.textContent = heatmapOptions.maxZoom;
+        heatmapMaxZoomInput.value = heatmapOptions.maxZoom;
+
+        // Add 'input' listeners for real-time updates
+        heatmapRadiusInput.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value);
+            heatmapOptions.radius = value; // Update state
+            radiusValueSpan.textContent = value; // Update display
+            updateHeatmap(); // Apply change to map
+        });
+        heatmapBlurInput.addEventListener('input', (e) => {
+             const value = parseFloat(e.target.value);
+            heatmapOptions.blur = value; // Update state
+            blurValueSpan.textContent = value; // Update display
+            updateHeatmap(); // Apply change to map
+        });
+        heatmapMaxZoomInput.addEventListener('input', (e) => {
+             const value = parseInt(e.target.value, 10);
+            heatmapOptions.maxZoom = value; // Update state
+            maxZoomValueSpan.textContent = value; // Update display
+            updateHeatmap(); // Apply change to map
+        });
+        console.log("Heatmap control listeners setup complete.");
+    }
+
+     function disableHeatmapControls(disabled) {
+         // Helper to enable/disable all heatmap inputs
+         if (heatmapRadiusInput) heatmapRadiusInput.disabled = disabled;
+         if (heatmapBlurInput) heatmapBlurInput.disabled = disabled;
+         if (heatmapMaxZoomInput) heatmapMaxZoomInput.disabled = disabled;
+     }
+
+
+    // --- View Switching Logic ---
+    function showCurrentView() {
+        console.log(`Showing view: ${currentView}`);
+        if (!map) { console.warn("Map not initialized."); return; }
+
+        // Remove existing layers from map
         console.log("Removing existing layers (if present)...");
-        if (pinLayer && map.hasLayer(pinLayer)) {
-            map.removeLayer(pinLayer);
-            console.log("Removed pin layer");
-        }
-        if (heatmapLayer && map.hasLayer(heatmapLayer)) {
-            map.removeLayer(heatmapLayer);
-            console.log("Removed heatmap layer");
-        }
-        // --- End removal ---
+        if (pinLayer && map.hasLayer(pinLayer)) map.removeLayer(pinLayer);
+        if (heatmapLayer && map.hasLayer(heatmapLayer)) map.removeLayer(heatmapLayer);
 
-        // --- Add the selected layer ---
+        // Add the selected layer and show/hide controls
         console.log(`Adding ${currentView} layer...`);
-        try {
-            if (currentView === 'pins' && pinLayer) {
-                map.addLayer(pinLayer);
-                console.log("Added pin layer to map.");
-            } else if (currentView === 'heatmap' && heatmapLayer) {
-                map.addLayer(heatmapLayer);
-                console.log("Added heatmap layer to map.");
-            } else {
-                console.warn(`Cannot add layer for view "${currentView}": Corresponding layer instance is missing or null.`);
-                // Maybe display a message if no layers could be shown?
-                mapElement.innerHTML += '<p style="position: absolute; top: 10px; left: 50px; background: yellow; padding: 5px; z-index: 1000;">No data to display for this view.</p>';
-                setTimeout(() => { // Clear message after a few seconds
-                    const msgElement = mapElement.querySelector('p[style*="yellow"]');
-                    if (msgElement) msgElement.remove();
-                }, 3000);
-            }
-        } catch (e) {
-            console.error(`Error adding ${currentView} layer:`, e);
+        let layerToAdd = null;
+        if (currentView === 'pins') {
+            layerToAdd = pinLayer;
+            if(heatmapOptionsPanel) heatmapOptionsPanel.style.display = 'none';
+            if(clusterToggleButton) clusterToggleButton.style.display = 'inline-block'; // Show cluster btn
+            if(clusterToggleButton) clusterToggleButton.disabled = false; // Ensure enabled
+        } else { // Heatmap view
+            layerToAdd = heatmapLayer;
+            if(heatmapOptionsPanel) heatmapOptionsPanel.style.display = 'block';
+            if(clusterToggleButton) clusterToggleButton.style.display = 'none'; // Hide cluster btn
+            if(clusterToggleButton) clusterToggleButton.disabled = true; // Ensure disabled
         }
-        // --- End adding ---
+
+        // Add the layer to the map if it exists
+        if (layerToAdd) {
+            try {
+                 map.addLayer(layerToAdd);
+                 console.log(`Added ${currentView} layer to map.`);
+            } catch (e) {
+                 console.error(`Error adding ${currentView} layer:`, e);
+                 updateStatus(`Error displaying ${currentView} layer.`, true);
+            }
+        } else {
+            // This happens if createLayer failed (e.g., no valid data)
+            console.warn(`Cannot add layer for view "${currentView}": Layer instance missing.`);
+            updateStatus(`No data available for ${currentView} view.`, false);
+        }
     }
 
-    function updateButtonText() {
-        if (!toggleButton) return;
+
+    // --- Button Text Update Functions ---
+    function updateViewToggleButtonText() {
+        if (!viewToggleButton) return;
         const nextViewText = (currentView === 'pins') ? 'Heatmap' : 'Pin';
-        toggleButton.textContent = `Switch to ${nextViewText} View`;
-        console.log(`Button text updated to: ${toggleButton.textContent}`);
+        viewToggleButton.textContent = `Switch to ${nextViewText} View`;
+        console.log(`View Toggle Button text updated to: ${viewToggleButton.textContent}`);
     }
 
-    // --- Start ---
+    function updateClusterToggleButtonText() {
+         if (!clusterToggleButton) return;
+        clusterToggleButton.textContent = isClusteringEnabled ? 'Disable Clustering' : 'Enable Clustering';
+        console.log(`Cluster Toggle Button text updated to: ${clusterToggleButton.textContent}`);
+    }
+
+
+    // --- Start Initialization ---
     initializeMap();
 
 }); // End DOMContentLoaded
