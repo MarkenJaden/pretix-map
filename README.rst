@@ -54,8 +54,8 @@ This plugin requires configuration in your `pretix.cfg` file to specify which ge
     .. code-block:: ini
 
         [pretix_mapplugin]
-        # REQUIRED for Nominatim: Set a descriptive User-Agent including application name and contact info.
-        # Replace with your actual details! See: https://operations.osmfoundation.org/policies/nominatim/
+        ; REQUIRED for Nominatim: Set a descriptive User-Agent including application name and contact info.
+        ; Replace with your actual details! See: https://operations.osmfoundation.org/policies/nominatim/
         nominatim_user_agent=YourTicketingSite/1.0 (Contact: admin@yourdomain.com) pretix-map-plugin/1.0
 
 *   **Method 2: Other Geocoding Services (e.g., Google, Mapbox - API Key likely needed)**
@@ -64,8 +64,8 @@ This plugin requires configuration in your `pretix.cfg` file to specify which ge
     .. code-block:: ini
 
         [pretix_mapplugin]
-        # Example for Google Geocoding API (if implemented in tasks.py)
-        # google_geocoding_api_key=YOUR_GOOGLE_GEOCODING_API_KEY
+        ; Example for Google Geocoding API (if implemented in tasks.py)
+        ; google_geocoding_api_key=YOUR_GOOGLE_GEOCODING_API_KEY
 
 **Important:** After adding or changing settings in `pretix.cfg`, you **must restart** the Pretix webserver and Celery workers for the changes to take effect.
 
